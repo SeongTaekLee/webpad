@@ -294,6 +294,7 @@
         </div>
         <label class="row">탭 대신 공백 넣기 <input type="checkbox" id="setSpaces"></label>
         <label class="row">파일 자동 저장 <input type="checkbox" id="setAutoSave"></label>
+        <label class="row" id="hiddenRow" title="탐색기에 $Recycle.Bin, System Volume Information 같은 숨김·시스템 항목도 보여줘요 (exe 버전)">숨김·시스템 파일 표시 <input type="checkbox" id="setHidden"></label>
         <hr>
         <button data-cmd="help">단축키 보기·바꾸기 <kbd data-key="help"></kbd></button>
         <button data-cmd="importUdl">Notepad++ 사용자 언어(XML) 불러오기</button>
@@ -431,7 +432,7 @@ var HL_LIMIT=4000;
 var PAD_TOP=4, PAD_LEFT=12;
 
 // ================= 설정 =================
-var settings={ theme:'', font:'nanum', fs:14, tab:4, spaces:false, autoSave:false, side:250, sideOpen:true, keys:{} };
+var settings={ theme:'', font:'nanum', fs:14, tab:4, spaces:false, autoSave:false, showHidden:false, side:250, sideOpen:true, keys:{} };
 try{ Object.assign(settings, JSON.parse(localStorage.getItem('webpad_settings')||'{}')); }catch(e){}
 function saveSettings(){ try{ localStorage.setItem('webpad_settings', JSON.stringify(settings)); }catch(e){} }
 var FONTS={ nanum:"'WebPadMono',Consolas,monospace", d2:"D2Coding,'D2Coding ligature','WebPadMono',monospace", consolas:"Consolas,'WebPadMono',monospace" };
@@ -451,6 +452,7 @@ function applySettings(){
   $('setTab').value=String(settings.tab);
   $('setSpaces').checked=settings.spaces;
   $('setAutoSave').checked=settings.autoSave;
+  $('setHidden').checked=settings.showHidden;
   $('sidebar').classList.toggle('hidden', !settings.sideOpen);
   $('resizer').classList.toggle('hidden', !settings.sideOpen);
   document.querySelector('[data-cmd="toggleSidebar"]').classList.toggle('on', settings.sideOpen);
@@ -1954,7 +1956,7 @@ function renderSearch(q){
 function renderHostSearch(q){
   var tree=$('tree'), token=++searchToken;
   tree.innerHTML='<div class="side-empty">찾는 중…</div>';
-  return hostCall({ type:'search', path:root.path, q:q, max:300 }).then(function(r){
+  return hostCall({ type:'search', path:root.path, q:q, max:300, hidden:settings.showHidden }).then(function(r){
     if(token!==searchToken) return;
     tree.innerHTML='';
     if(!r.paths.length){ tree.innerHTML='<div class="side-empty">"'+esc(q)+'" 이름의 파일이 없어요</div>'; return; }
@@ -2524,6 +2526,7 @@ $('setTheme').addEventListener('change', function(){ settings.theme=this.value; 
 $('setFont').addEventListener('change', function(){ settings.font=this.value; saveSettings(); applySettings(); if(document.fonts) document.fonts.ready.then(function(){ measureFont(); requestRender(); }); requestRender(); });
 $('setTab').addEventListener('change', function(){ settings.tab=+this.value; saveSettings(); applySettings(); requestRender(); });
 $('setSpaces').addEventListener('change', function(){ settings.spaces=this.checked; saveSettings(); });
+$('setHidden').addEventListener('change', function(){ settings.showHidden=this.checked; saveSettings(); if(root) renderTree(); });
 $('setAutoSave').addEventListener('change', function(){ settings.autoSave=this.checked; saveSettings(); toast(this.checked?'한 번 저장한 파일은 편집하고 2초 뒤에 자동으로 저장돼요':'파일 자동 저장을 껐어요 (임시 저장은 계속돼요)'); });
 
 $('gutter').addEventListener('wheel', function(e){ if(active){ e.preventDefault(); var sc=scroller(active); sc.scrollTop+=e.deltaY; sc.scrollLeft+=e.deltaX; } }, { passive:false });
@@ -2558,6 +2561,7 @@ var installEvt=null;
 window.addEventListener('beforeinstallprompt', function(e){ e.preventDefault(); installEvt=e; $('installBtn').classList.remove('hidden'); });
 if(!HOST && 'serviceWorker' in navigator && location.protocol==='https:') navigator.serviceWorker.register('sw.js').catch(function(){});
 if(HOST) document.querySelector('[data-cmd="getExe"]').classList.add('hidden');
+if(!HOST) $('hiddenRow').classList.add('hidden');
 
 // ================= 실행 파일(WebView2) 연결 =================
 // exe로 연 파일은 exe가 내용을 보내 주고, 저장도 exe가 원래 경로에 쓴다
@@ -2583,7 +2587,7 @@ function baseName(p){ return p.replace(/[\\/]+$/,'').split(/[\\/]/).pop() || p; 
 function joinPath(a, b){ return a.replace(/[\\/]+$/,'')+'\\'+b; }
 function HostDir(path){ this.kind='directory'; this.host=true; this.path=path; this.name=baseName(path); }
 HostDir.prototype.values=async function*(){
-  var r=await hostCall({ type:'list', path:this.path });
+  var r=await hostCall({ type:'list', path:this.path, hidden:settings.showHidden });
   for(var i=0;i<r.entries.length;i++){ var e=r.entries[i], p=joinPath(this.path, e.name); yield e.dir ? new HostDir(p) : new HostFile(p); }
 };
 function HostFile(path){ this.kind='file'; this.host=true; this.path=path; this.name=baseName(path); }

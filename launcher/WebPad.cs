@@ -24,8 +24,8 @@ using Microsoft.Web.WebView2.WinForms;
 [assembly: AssemblyTitle("WebPad")]
 [assembly: AssemblyProduct("WebPad")]
 [assembly: AssemblyDescription("웹패드 - 가벼운 코드 편집기")]
-[assembly: AssemblyVersion("1.2.1.0")]
-[assembly: AssemblyFileVersion("1.2.1.0")]
+[assembly: AssemblyVersion("1.2.2.0")]
+[assembly: AssemblyFileVersion("1.2.2.0")]
 
 static class Program
 {
@@ -345,9 +345,16 @@ class MainForm : Form
 
     static readonly HashSet<string> SkipDirs = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { ".git", "node_modules", "__pycache__", ".svn", "$RECYCLE.BIN", "System Volume Information" };
 
+    // 기본은 "숨김이면서 시스템"인 항목($Recycle.Bin 등)을 감춘다. 설정에서 켜면 모두 보여준다
+    static bool IsHiddenSystem(FileSystemInfo fi)
+    {
+        return (fi.Attributes & FileAttributes.System) != 0 && (fi.Attributes & FileAttributes.Hidden) != 0;
+    }
+
     void HostCall(string type, Dictionary<string, object> m, Dictionary<string, object> reply)
     {
         string path = m.ContainsKey("path") ? m["path"] as string : null;
+        bool showHidden = m.ContainsKey("hidden") && m["hidden"] is bool && (bool)m["hidden"];
         if (type == "write")
         {
             File.WriteAllBytes(path, Convert.FromBase64String((string)m["b64"]));
@@ -363,7 +370,7 @@ class MainForm : Form
             DirectoryInfo di = new DirectoryInfo(path);
             foreach (FileSystemInfo fi in di.EnumerateFileSystemInfos())
             {
-                if ((fi.Attributes & FileAttributes.System) != 0 && (fi.Attributes & FileAttributes.Hidden) != 0) continue;
+                if (!showHidden && IsHiddenSystem(fi)) continue;
                 Dictionary<string, object> e = new Dictionary<string, object>();
                 e["name"] = fi.Name;
                 e["dir"] = (fi.Attributes & FileAttributes.Directory) != 0;
@@ -388,6 +395,7 @@ class MainForm : Form
                     foreach (FileSystemInfo fi in items)
                     {
                         scanned++;
+                        if (!showHidden && IsHiddenSystem(fi)) continue;
                         if ((fi.Attributes & FileAttributes.Directory) != 0) { if (!SkipDirs.Contains(fi.Name)) stack.Push(fi.FullName); continue; }
                         if (fi.Name.ToLowerInvariant().Contains(q)) { found.Add(fi.FullName); if (found.Count >= max) break; }
                     }
