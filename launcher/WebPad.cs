@@ -24,8 +24,8 @@ using Microsoft.Web.WebView2.WinForms;
 [assembly: AssemblyTitle("WebPad")]
 [assembly: AssemblyProduct("WebPad")]
 [assembly: AssemblyDescription("웹패드 - 가벼운 코드 편집기")]
-[assembly: AssemblyVersion("1.2.4.0")]
-[assembly: AssemblyFileVersion("1.2.4.0")]
+[assembly: AssemblyVersion("1.2.5.0")]
+[assembly: AssemblyFileVersion("1.2.5.0")]
 
 static class Program
 {
@@ -363,6 +363,12 @@ class MainForm : Form
         reply["dirs"] = dirs;
     }
 
+    // 파일 수정 시각 (1970년 기준 밀리초, 자바스크립트 Date와 같은 단위)
+    static long Mtime(string path)
+    {
+        return (long)(File.GetLastWriteTimeUtc(path) - new DateTime(1970, 1, 1, 0, 0, 0, DateTimeKind.Utc)).TotalMilliseconds;
+    }
+
     static readonly HashSet<string> SkipDirs = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { ".git", "node_modules", "__pycache__", ".svn", "$RECYCLE.BIN", "System Volume Information" };
 
     // 기본은 "숨김이면서 시스템"인 항목($Recycle.Bin 등)을 감춘다. 설정에서 켜면 모두 보여준다
@@ -378,11 +384,20 @@ class MainForm : Form
         if (type == "write")
         {
             File.WriteAllBytes(path, Convert.FromBase64String((string)m["b64"]));
+            reply["mtime"] = Mtime(path);
         }
         else if (type == "read")
         {
             reply["b64"] = Convert.ToBase64String(File.ReadAllBytes(path));
             reply["name"] = Path.GetFileName(path);
+            reply["mtime"] = Mtime(path);
+        }
+        else if (type == "stat")
+        {
+            // 다른 프로그램이 파일을 고쳤는지 보려고 수정 시각만 묻는다
+            bool exists = File.Exists(path);
+            reply["exists"] = exists;
+            if (exists) reply["mtime"] = Mtime(path);
         }
         else if (type == "list")
         {
@@ -459,7 +474,7 @@ class MainForm : Form
         msg["type"] = "openFile";
         msg["path"] = path;
         msg["name"] = Path.GetFileName(path);
-        try { msg["b64"] = Convert.ToBase64String(File.ReadAllBytes(path)); }
+        try { msg["b64"] = Convert.ToBase64String(File.ReadAllBytes(path)); msg["mtime"] = Mtime(path); }
         catch (Exception ex) { MessageBox.Show(this, path + "\n\n" + ex.Message, "파일을 열 수 없어요"); return; }
         web.CoreWebView2.PostWebMessageAsJson(json.Serialize(msg));
     }
