@@ -1,0 +1,25 @@
+{
+  "name": "웹패드",
+  "short_name": "웹패드",
+  "description": "브라우저에서 돌아가는 가벼운 코드 편집기. 탭, 폴더 탐색기, 블록 편집, ABAP·SQL·JSON·CSV 문법을 지원해요.",
+  "lang": "ko",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#ffffff",
+  "theme_color": "#2563eb",
+  "icons": [
+    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png" },
+    { "src": "icons/icon.svg", "sizes": "any", "type": "image/svg+xml" }
+  ],
+  "file_handlers": [
+    {
+      "action": "./",
+      "accept": {
+        "text/plain": [".txt", ".log", ".ini", ".cfg", ".conf", ".properties", ".env", ".md", ".abap", ".sql", ".csv", ".tsv", ".json", ".xml", ".yml", ".yaml", ".js", ".ts", ".py", ".java", ".cs", ".bat", ".cmd", ".sh", ".ps1", ".html", ".htm", ".css"]
+      }
+    }
+  ],
+  "launch_handler": { "client_mode": "focus-existing" }
+}
