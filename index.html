@@ -137,6 +137,31 @@
   .oi .nm{ overflow:hidden; text-overflow:ellipsis; }
   .modal h3 .note{ color:var(--muted); font-weight:400; font-size:12px; }
   #menuTools{ min-width:320px; }
+  #menuRecent{ min-width:300px; max-width:560px; }
+  #menuRecent button{ display:block; }
+  #menuRecent button .sub{ display:block; color:var(--muted); font-size:11px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  #resultsHost{ flex:none; height:240px; display:flex; flex-direction:column; border-top:1px solid var(--line); background:var(--bg); min-height:0; }
+  #resultsList{ flex:1; overflow:auto; font:13px var(--mono); }
+  .rf{ padding:3px 8px; background:var(--panel); color:var(--muted); font-weight:700; position:sticky; top:0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; font:12px 'Malgun Gothic',sans-serif; }
+  .rl{ display:flex; gap:8px; padding:1px 8px 1px 16px; cursor:pointer; white-space:pre; tab-size:var(--tab); }
+  .rl:hover, .rl.cur{ background:var(--accent-soft); }
+  .rl .ln{ color:var(--muted); min-width:52px; text-align:right; flex:none; }
+  .rl mark{ background:var(--mark); color:inherit; border-radius:2px; }
+  #acBox{ position:absolute; z-index:20; background:var(--bg); border:1px solid var(--line); border-radius:6px; box-shadow:0 8px 24px rgba(0,0,0,.18); max-height:224px; overflow:auto; min-width:160px; max-width:420px; font:13px var(--mono); padding:3px; }
+  #acBox div{ padding:3px 10px; border-radius:4px; cursor:pointer; white-space:pre; display:flex; justify-content:space-between; gap:12px; }
+  #acBox div.sel, #acBox div:hover{ background:var(--accent-soft); }
+  #acBox b{ color:var(--accent); font-weight:700; }
+  #acBox .k{ color:var(--muted); font-size:11px; }
+  #braceLayer{ position:absolute; left:0; top:0; pointer-events:none; z-index:1; }
+  #braceLayer div{ position:absolute; height:var(--lh); border:1px solid var(--accent); border-radius:2px; background:rgba(37,99,235,.10); }
+  .ws{ color:var(--muted); opacity:.55; }
+  .ws-sp{ background:radial-gradient(circle, var(--muted) 1.1px, transparent 1.5px) 0 0 / var(--cw,8px) 100% repeat-x; opacity:.7; }
+  .ws-tab{ background:radial-gradient(circle, var(--muted) 1.3px, transparent 1.8px) right center / 8px 8px no-repeat; opacity:.7; }
+  .modal .frow{ display:flex; align-items:center; gap:6px; flex-wrap:wrap; margin-top:8px; }
+  .modal .frow input[type=text]{ width:auto; flex:1; }
+  .modal .frow input[type=number]{ width:80px; }
+  .modal .opt{ font:12px var(--mono); padding:3px 7px; border:1px solid var(--line); }
+  .modal .opt.on{ background:var(--accent-soft); border-color:var(--accent); }
   #codeWrap{ flex:1; position:relative; overflow:hidden; min-width:0; }
   #curLine{ position:absolute; left:0; right:0; height:var(--lh); background:var(--curline); pointer-events:none; }
   .layer{ position:absolute; left:0; top:0; margin:0; padding:4px 12px 0; font:var(--fs)/var(--lh) var(--mono); white-space:pre; tab-size:var(--tab); pointer-events:none; will-change:transform; }
@@ -241,6 +266,10 @@
     <button class="tb" data-cmd="openFolder">폴더 열기</button>
     <button class="tb" data-cmd="save">저장</button>
     <button class="tb" data-cmd="saveAs">다른 이름으로</button>
+    <div class="menu-wrap">
+      <button class="tb" data-menu="menuRecent" title="최근에 연 파일">최근 ▾</button>
+      <div class="menu" id="menuRecent"></div>
+    </div>
     <div class="sep"></div>
     <button class="tb" data-cmd="find">찾기</button>
     <button class="tb" data-cmd="replace">바꾸기</button>
@@ -331,6 +360,9 @@
         </div>
         <label class="row">탭 대신 공백 넣기 <input type="checkbox" id="setSpaces"></label>
         <label class="row">파일 자동 저장 <input type="checkbox" id="setAutoSave"></label>
+        <label class="row" title="공백은 ·, 탭은 점, 줄 끝은 ¶로 보여줘요">공백·탭·줄 끝 표시 <input type="checkbox" id="setWs"></label>
+        <label class="row">저장할 때 줄 끝 공백 제거 <input type="checkbox" id="setTrimSave"></label>
+        <label class="row">저장할 때 마지막 줄 바꿈 넣기 <input type="checkbox" id="setFinalNl"></label>
         <label class="row" id="hiddenRow" title="탐색기에 $Recycle.Bin, System Volume Information 같은 숨김·시스템 항목도 보여줘요 (exe 버전)">숨김·시스템 파일 표시 <input type="checkbox" id="setHidden"></label>
         <hr>
         <button data-cmd="help">단축키 보기·바꾸기 <kbd data-key="help"></kbd></button>
@@ -374,10 +406,13 @@
           <input type="text" id="replaceInput" placeholder="바꿀 내용" spellcheck="false">
           <button class="tb" data-cmd="replaceOne">바꾸기</button>
           <button class="tb" data-cmd="replaceAll">모두 바꾸기</button>
+          <button class="tb" data-cmd="findAll" title="일치하는 줄을 아래 목록으로">모두 찾기</button>
+          <button class="tb" data-cmd="findInFiles" title="열어 둔 폴더의 모든 파일에서 찾기">폴더에서 찾기 <kbd data-key="findInFiles" style="font:11px var(--mono);color:var(--muted)"></kbd></button>
           <span id="findHint"></span>
         </div>
       </div>
       <div id="editorHost">
+        <div id="acBox" class="hidden"></div>
         <div id="gutter"><div id="gutterInner"></div></div>
         <div id="codeWrap">
           <div id="spacer"></div>
@@ -385,6 +420,7 @@
           <pre class="layer" id="marks"></pre>
           <pre class="layer" id="hl"></pre>
           <div id="colLayer"></div>
+          <div id="braceLayer"></div>
         </div>
       </div>
       <div id="diffHost" class="hidden">
@@ -399,6 +435,18 @@
           <button class="tb" data-cmd="closeCompare">비교 닫기</button>
         </div>
         <div id="diffScroll"><div id="diffSpacer"></div><div id="diffRows"></div></div>
+      </div>
+      <div id="resultsHost" class="hidden">
+        <div class="csv-tools">
+          <b id="resTitle"></b>
+          <span class="note" id="resStat"></span>
+          <span class="spacer"></span>
+          <button class="tb" data-cmd="prevResult" title="이전 결과 (Shift+F4)">↑ 이전</button>
+          <button class="tb" data-cmd="nextResult" title="다음 결과 (F4)">↓ 다음</button>
+          <button class="tb" data-cmd="bookmarkResults" id="resBm">일치 줄 북마크</button>
+          <button class="tb" data-cmd="closeResults">닫기</button>
+        </div>
+        <div id="resultsList"></div>
       </div>
       <div id="csvHost" class="hidden">
         <div class="csv-tools">
@@ -443,6 +491,29 @@
   <input type="text" id="gotoInput" placeholder="줄 번호 (예: 120 또는 120:5)">
 </div></div>
 
+<div class="modal-bg hidden" id="fifModal"><div class="modal">
+  <h3>폴더에서 찾기 <span class="note" id="fifRoot"></span></h3>
+  <input type="text" id="fifInput" placeholder="찾을 내용" spellcheck="false">
+  <div class="frow">
+    <input type="text" id="fifFilter" placeholder="파일 형식 (예: *.abap;*.txt — 비우면 모두)" spellcheck="false">
+    <button class="tb opt" id="fifCase" title="대소문자 구분">Aa</button>
+    <button class="tb opt" id="fifWord" title="단어 단위">단어</button>
+    <button class="tb opt" id="fifRe" title="정규식">.*</button>
+    <button class="btn" id="fifGo">찾기</button>
+  </div>
+  <div class="note" id="fifNote" style="color:var(--muted);font-size:12px;margin-top:8px">하위 폴더까지 모두 찾아요. 결과는 2,000곳까지 보여줘요.</div>
+</div></div>
+
+<div class="modal-bg hidden" id="colModal"><div class="modal">
+  <h3>열 편집 <span class="note">블록(Alt+드래그)이나 여러 줄을 선택한 뒤, 모든 줄의 같은 칸에 넣어요</span></h3>
+  <label class="row" style="padding-left:0"><input type="radio" name="colMode" value="text" checked> 글자 넣기</label>
+  <input type="text" id="colText" placeholder="모든 줄에 넣을 글자" spellcheck="false">
+  <label class="row" style="padding-left:0;margin-top:8px"><input type="radio" name="colMode" value="num"> 숫자 넣기</label>
+  <div class="frow" style="margin-top:4px">시작 <input type="number" id="colStart" value="1"> 증가 <input type="number" id="colStep" value="1">
+    <label style="display:flex;align-items:center;gap:4px"><input type="checkbox" id="colZero"> 자릿수 맞춰 0 채우기</label></div>
+  <div style="text-align:right;margin-top:12px"><button class="btn" id="colOk">넣기</button></div>
+</div></div>
+
 <div class="modal-bg hidden" id="outlineModal"><div class="modal">
   <h3>구조 목록 <span class="note" id="outlineNote"></span></h3>
   <input type="text" id="outlineInput" placeholder="이름으로 거르기 · ↑↓ 고르기 · Enter 이동" spellcheck="false">
@@ -475,7 +546,7 @@ var HL_LIMIT=4000;
 var PAD_TOP=4, PAD_LEFT=12;
 
 // ================= 설정 =================
-var settings={ theme:'', font:'nanum', fs:14, tab:4, spaces:false, autoSave:false, showHidden:false, side:250, sideOpen:true, keys:{} };
+var settings={ theme:'', font:'nanum', fs:14, tab:4, spaces:false, autoSave:false, showHidden:false, showWs:false, trimSave:false, finalNl:false, side:250, sideOpen:true, keys:{} };
 try{ Object.assign(settings, JSON.parse(localStorage.getItem('webpad_settings')||'{}')); }catch(e){}
 function saveSettings(){ try{ localStorage.setItem('webpad_settings', JSON.stringify(settings)); }catch(e){} }
 var FONTS={ nanum:"'WebPadMono',Consolas,monospace", d2:"D2Coding,'D2Coding ligature','WebPadMono',monospace", consolas:"Consolas,'WebPadMono',monospace" };
@@ -496,6 +567,7 @@ function applySettings(){
   $('setSpaces').checked=settings.spaces;
   $('setAutoSave').checked=settings.autoSave;
   $('setHidden').checked=settings.showHidden;
+  $('setWs').checked=settings.showWs; $('setTrimSave').checked=settings.trimSave; $('setFinalNl').checked=settings.finalNl;
   $('sidebar').classList.toggle('hidden', !settings.sideOpen);
   $('resizer').classList.toggle('hidden', !settings.sideOpen);
   document.querySelector('[data-cmd="toggleSidebar"]').classList.toggle('on', settings.sideOpen);
@@ -511,6 +583,7 @@ function measureFont(){
   s.textContent='MMMMMMMMMMMMMMMMMMMM'; CW=s.getBoundingClientRect().width/20;
   s.textContent='가나다라마바사아자차가나다라마바사아자차'; WIDE=s.getBoundingClientRect().width/20;
   s.remove();
+  document.documentElement.style.setProperty('--cw', CW+'px'); // 공백 표시 점의 간격
 }
 if(document.fonts) document.fonts.ready.then(function(){ measureFont(); requestRender(); });
 
@@ -968,6 +1041,7 @@ function makeDoc(o){
   });
   ta.addEventListener('input', function(e){ onInput(d, e.inputType); });
   ta.addEventListener('scroll', requestRender);
+  ta.addEventListener('blur', function(){ setTimeout(function(){ if(ac.open && document.activeElement!==ta) acClose(); }, 120); });
   ta.addEventListener('keydown', function(e){ onEditorKey(e, d); });
   ta.addEventListener('mousedown', function(e){ onEditorMouse(e, d); });
   var crlf=function(t){ return t.replace(/\n/g, '\r\n'); };
@@ -1117,7 +1191,7 @@ function render(){
   var ox=d.big?0:-sl, oy=d.big?0:-st;
   for(var i=first;i<=last;i++){
     var r=tokenize(d, lineText(d,i), state);
-    html.push(r[0]);
+    html.push(settings.showWs ? wsify(r[0])+(i<d.ls.length-1?'<span class="ws">¶</span>':'') : r[0]);
     if(L.multiline && d.stDirty===i && d.states.length===i+1){ d.states[i+1]=r[1]; d.stDirty=i+1; }
     state=r[1];
     var ncls=(i===curL?'cur':'')+(d.bm.has(i)?' bm':'');
@@ -1133,6 +1207,40 @@ function render(){
   curLine.style.display=(d.col||d.vsel)?'none':'';
   renderMarks(d, first, last, ty, -ox);
   renderCol(d, first, last, -oy, -ox);
+  renderBrace(d, first, last, -oy, -ox);
+  if(ac.open) acPosition();
+}
+// 공백은 ·, 탭은 점으로 (태그 안은 건드리지 않는다)
+function wsify(s){
+  return s.split(/(<[^>]*>)/).map(function(p, k){
+    if(k%2) return p;
+    return p.replace(/ +|\t/g, function(m){ return m==='\t' ? '<span class="ws-tab">\t</span>' : '<span class="ws-sp">'+m+'</span>'; });
+  }).join('');
+}
+function bracePair(d){
+  if(d.col || d.vsel || sA(d)!==sB(d)) return null;
+  var v=d.text, p=sA(d), pairs='()[]{}', i=p, c=v[i], idx=c?pairs.indexOf(c):-1;
+  if(idx<0){ i=p-1; c=v[i]; idx=c?pairs.indexOf(c):-1; }
+  if(idx<0) return null;
+  if(d._bp && d._bp.i===i && d._bp.ver===d.ver && d._bp.len===v.length) return d._bp.r;
+  var open=idx%2===0, mate=pairs[open?idx+1:idx-1], depth=0, step=open?1:-1, lim=200000, r=null;
+  for(var j=i; j>=0 && j<v.length && lim--; j+=step){
+    if(v[j]===c) depth++; else if(v[j]===mate){ depth--; if(depth===0){ r=[i,j]; break; } }
+  }
+  d._bp={ i:i, ver:d.ver, len:v.length, r:r }; return r;
+}
+var braceLayer=$('braceLayer');
+function renderBrace(d, first, last, st, sl){
+  var pr=bracePair(d);
+  if(!pr){ if(braceLayer.firstChild) braceLayer.innerHTML=''; return; }
+  var html=[];
+  pr.forEach(function(pos){
+    var ln=lineOf(d.ls, pos); if(ln<first || ln>last) return;
+    var t=lineText(d, ln), x=xOf(t, pos-d.ls[ln]);
+    html.push('<div style="top:'+(PAD_TOP+ln*LH)+'px;left:'+(PAD_LEFT+x-1)+'px;width:'+(charAdvance(t.charCodeAt(pos-d.ls[ln]), x)+1)+'px"></div>');
+  });
+  braceLayer.innerHTML=html.join('');
+  braceLayer.style.transform='translate('+(-sl)+'px,'+(-st)+'px)';
 }
 function smartWord(d){
   if(d.col || (findOpen && $('findInput').value)) return null;
@@ -1170,7 +1278,8 @@ function escRe(s){ return s.replace(/[.*+?^${}()|[\]\\]/g,'\\$&'); }
 var statusTimer=0;
 function onInput(d, type){ syncText(d, type); afterChange(d); }
 function afterChange(d){
-  d.snapDirty=true;
+  d.snapDirty=true; d.ver=(d.ver||0)+1;
+  if(ac.open && ac.d===d) acRefresh();
   updateBigMode(d);
   updateTabDirty(d);
   if(d===active){
@@ -1605,6 +1714,7 @@ function colCompEnd(d, data){
 
 function onEditorKey(e, d){
   var k=e.key, ctrl=e.ctrlKey||e.metaKey, sh=e.shiftKey, alt=e.altKey;
+  if(ac.open && acKey(e, d)) return;
   if(ctrl && !alt && !e.isComposing && (e.code==='KeyZ' || e.code==='KeyY')){ e.preventDefault(); undoCmd(d, e.code==='KeyY' || sh); return; }
   if(!e.isComposing && /^(Arrow|Home|End|Page)/.test(k)) d.undoSeal=true;
   if(d.big && bigKey(e, d)) return;
@@ -1843,6 +1953,7 @@ function openFromFile(file, handle, path, hostPath, mtime){
     var d=makeDoc({ name:file.name, path:path||file.name, text:text, handle:handle||null, hostPath:hostPath||null, eol:eol, enc:r.enc, savedText:(handle||hostPath)?text:null,
       mtime:mtime!=null?mtime:(handle&&!handle.host?file.lastModified:null) });
     activate(d);
+    if(handle || hostPath) addRecent(d);
     if(r.enc==='euc-kr') toast('ANSI(EUC-KR)로 읽었어요. 저장할 때도 같은 인코딩으로 저장해요');
   });
 }
@@ -1870,6 +1981,7 @@ $('fileInput').addEventListener('change', function(){
   this.value='';
 });
 function writeDoc(d, quiet){
+  applySaveOptions(d);
   var text=d.text, enc=encodeText(d.eol==='\r\n'?text.replace(/\n/g,'\r\n'):text, d.enc);
   if(!d.handle && d.hostPath && HOST){
     d.writing=true;
@@ -1920,7 +2032,7 @@ function saveAs(d){
       if(!r.path) return;
       d.hostPath=r.path; d.handle=null; d.name=baseName(r.path); d.path=r.path;
       if(d.lang==='text') d.lang=langForName(d.name);
-      d.states=[null]; activate(d);
+      d.states=[null]; activate(d); addRecent(d);
       return writeDoc(d);
     }).catch(function(e){ toast('저장하지 못했어요: '+e.message, true); });
     return;
@@ -1930,7 +2042,7 @@ function saveAs(d){
   window.showSaveFilePicker({ suggestedName:name }).then(function(h){
     d.handle=h; d.name=h.name; d.path=h.name;
     if(d.lang==='text') d.lang=langForName(h.name);
-    d.states=[null]; activate(d);
+    d.states=[null]; activate(d); addRecent(d);
     return writeDoc(d);
   }).catch(function(e){ if(e.name!=='AbortError') toast('저장하지 못했어요: '+e.message, true); });
 }
@@ -2754,6 +2866,283 @@ var CONVERTERS={
   epochDate:epochToDate
 };
 
+// ================= 찾기 결과 목록 (현재 문서 / 폴더) =================
+var results={ items:[], cur:-1, kind:'' };
+function showResults(kind, title, items, stat){
+  results={ items:items, cur:-1, kind:kind };
+  $('resTitle').textContent=title; $('resStat').textContent=stat||'';
+  $('resBm').classList.toggle('hidden', kind!=='doc');
+  $('resultsHost').classList.remove('hidden');
+  var html=[], lastFile=null;
+  for(var i=0;i<items.length;i++){
+    var it=items[i];
+    if(it.file!==lastFile){ lastFile=it.file; html.push('<div class="rf" title="'+esc(it.file)+'">'+esc(it.file)+'</div>'); }
+    var t=it.text, a=Math.max(0, Math.min(it.col, t.length)), b=Math.max(a, Math.min(it.col+it.len, t.length));
+    html.push('<div class="rl" data-i="'+i+'"><span class="ln">'+(it.line+1)+'</span><span>'+esc(t.slice(0,a))+'<mark>'+esc(t.slice(a,b))+'</mark>'+esc(t.slice(b))+'</span></div>');
+  }
+  if(!items.length) html.push('<div class="side-empty">결과가 없어요</div>');
+  $('resultsList').innerHTML=html.join('');
+  if(active) requestRender();
+}
+function closeResults(){ $('resultsHost').classList.add('hidden'); results={ items:[], cur:-1, kind:'' }; if(active) active.ta.focus(); }
+function gotoResult(i){
+  var it=results.items[i]; if(!it) return;
+  results.cur=i;
+  document.querySelectorAll('#resultsList .rl.cur').forEach(function(x){ x.classList.remove('cur'); });
+  var el=document.querySelector('#resultsList .rl[data-i="'+i+'"]'); if(el){ el.classList.add('cur'); el.scrollIntoView({ block:'nearest' }); }
+  var place=function(d){
+    if(!d) return;
+    var ln=Math.min(it.line, d.ls.length-1), s=d.ls[ln]+Math.min(it.col, lineEnd(d,ln)-d.ls[ln]), e=Math.min(s+it.len, lineEnd(d,ln));
+    // 그 사이 문서가 바뀌었으면 줄 안에서 다시 찾는다
+    if(d.text.slice(s,e)!==it.text.slice(it.col, it.col+it.len)){ var k=lineText(d,ln).indexOf(it.text.slice(it.col, it.col+it.len)); if(k>=0){ s=d.ls[ln]+k; e=s+it.len; } }
+    d.ta.focus(); setSel(d, s, e); revealPos(d, s); requestRender(); updateStatus();
+  };
+  if(it.d && docs.indexOf(it.d)>=0){ if(active!==it.d) activate(it.d); place(it.d); return; }
+  var p=it.hostPath ? hostOpenPath(it.hostPath) : it.h ? openHandle(it.h, it.path) : Promise.resolve();
+  p.then(function(){ place(active); });
+}
+function resultStep(dir){
+  if(!results.items.length) return toast('찾기 결과가 없어요. 찾기 창의 "모두 찾기"나 "폴더에서 찾기"를 쓰세요');
+  gotoResult((results.cur+dir+results.items.length)%results.items.length);
+}
+$('resultsList').addEventListener('click', function(e){ var r=e.target.closest('.rl'); if(r) gotoResult(+r.dataset.i); });
+// 문자열 안에서 정규식 일치를 줄 단위 항목으로
+function scanMatches(text, re, max, mk){
+  var out=[], m, line=0, lastIdx=0, lastLine=0;
+  re.lastIndex=0;
+  while((m=re.exec(text)) && out.length<max){
+    if(m[0].length===0){ re.lastIndex++; continue; }
+    for(var i=lastIdx;i<m.index;i++) if(text.charCodeAt(i)===10) lastLine++;
+    lastIdx=m.index; line=lastLine;
+    var ls=text.lastIndexOf('\n', m.index-1)+1, le=text.indexOf('\n', m.index); if(le<0) le=text.length;
+    var lt=text.slice(ls, le).replace(/\r$/,''), col=m.index-ls, len=Math.min(m[0].length, le-m.index);
+    if(lt.length>400){ var cut=Math.max(0, col-80); lt=(cut?'…':'')+lt.slice(cut, cut+400); col=col-cut+(cut?1:0); }
+    out.push(mk({ line:line, col:col, len:len, text:lt }));
+  }
+  return out;
+}
+function findAllInDoc(){
+  var d=active; if(!d) return;
+  if(!findOpen) openFind(false);
+  if(!findRe || findRe==='err') return toast('찾을 내용을 먼저 넣으세요');
+  var re=new RegExp(findRe.source, findRe.flags.indexOf('g')>=0?findRe.flags:findRe.flags+'g');
+  var items=scanMatches(d.text, re, 5000, function(it){ it.file=d.name; it.d=d; return it; });
+  showResults('doc', '"'+$('findInput').value+'" 찾기 결과 — '+d.name, items, items.length>=5000?'5,000곳까지만 보여줘요':items.length.toLocaleString()+'곳');
+  if(!items.length) toast('일치하는 곳이 없어요');
+}
+function bookmarkResults(){
+  if(results.kind!=='doc' || !results.items.length) return;
+  var d=results.items[0].d; if(!d || docs.indexOf(d)<0) return;
+  results.items.forEach(function(it){ if(it.line<d.ls.length) d.bm.add(it.line); });
+  requestRender(); scheduleSnapshot(); toast('북마크 '+d.bm.size+'개');
+}
+
+// ================= 폴더에서 찾기 =================
+var fifOpts={ case:false, word:false, re:false }, fifToken=0;
+function openFindInFiles(){
+  if(!root) return toast('먼저 탐색기에서 폴더를 여세요 (Ctrl+Shift+F는 열어 둔 폴더에서 찾아요)');
+  var sel=active ? active.text.slice(sA(active), sB(active)) : '';
+  if(sel && sel.indexOf('\n')<0 && sel.length<200) $('fifInput').value=sel; else if(findOpen && $('findInput').value) $('fifInput').value=$('findInput').value;
+  $('fifRoot').textContent=root.host ? root.path : root.name;
+  $('fifModal').classList.remove('hidden'); $('fifInput').focus(); $('fifInput').select();
+}
+function globToRe(filter){
+  var parts=filter.split(/[;,\s]+/).filter(Boolean); if(!parts.length) return null;
+  return new RegExp('^(?:'+parts.map(function(g){ return escRe(g).replace(/\\\*/g,'.*').replace(/\\\?/g,'.'); }).join('|')+')$', 'i');
+}
+var BIN_EXT=/\.(exe|dll|bin|obj|pdb|png|jpe?g|gif|bmp|ico|webp|zip|7z|rar|gz|tar|pdf|docx?|xlsx?|pptx?|mp3|mp4|avi|mov|wav|ttf|otf|woff2?|class|jar|pyc|so|dylib|iso|msi|dat)$/i;
+function isBinary(buf){ var b=new Uint8Array(buf, 0, Math.min(buf.byteLength, 8000)); for(var i=0;i<b.length;i++) if(b[i]===0) return true; return false; }
+function runFindInFiles(){
+  var q=$('fifInput').value; if(!q) return;
+  var src;
+  try{
+    src=fifOpts.re ? q : escRe(q);
+    if(fifOpts.word) src='(?<![\\w\\u00C0-\\uFFFF])(?:'+src+')(?![\\w\\u00C0-\\uFFFF])';
+    new RegExp(src, 'g');
+  }catch(e){ return toast('정규식 오류: '+e.message, true); }
+  var flt=globToRe($('fifFilter').value), token=++fifToken, title='"'+q+'" — '+(root.host?root.path:root.name);
+  $('fifModal').classList.add('hidden');
+  showResults('fif', title, [], '찾는 중…');
+  var finish=function(items, files, truncated){
+    if(token!==fifToken) return;
+    var nf=new Set(items.map(function(it){ return it.file; })).size;
+    showResults('fif', title, items, (files||0).toLocaleString()+'개 파일 확인 · '+nf.toLocaleString()+'개 파일에서 '+items.length.toLocaleString()+'곳'+(truncated?' (2,000곳까지만)':''));
+    if(items.length) gotoResult(0); else toast('"'+q+"'을(를) 찾지 못했어요");
+  };
+  if(root.host){
+    hostCall({ type:'grep', path:root.path, pattern:src, ignoreCase:!fifOpts.case, filter:$('fifFilter').value, hidden:settings.showHidden, max:2000 }).then(function(r){
+      var items=r.items.map(function(it){ return { file:it.path, hostPath:it.path, line:it.line, col:it.col, len:it.len, text:it.text }; });
+      finish(items, r.files, r.truncated);
+    }).catch(function(e){ if(token===fifToken){ showResults('fif', title, [], ''); toast('찾지 못했어요: '+e.message, true); } });
+    return;
+  }
+  var re=new RegExp(src, 'g'+(fifOpts.case?'':'i')), st={ items:[], files:0, stop:false };
+  var tick=function(){ if(token===fifToken) $('resStat').textContent='찾는 중… '+st.files.toLocaleString()+'개 파일, '+st.items.length.toLocaleString()+'곳'; };
+  async function walk(dh, path){
+    for await (var hh of dh.values()){
+      if(st.stop || token!==fifToken) return;
+      var p=path?path+'/'+hh.name:hh.name;
+      if(hh.kind==='directory'){ if(!SKIP_DIRS[hh.name]) await walk(hh, p); continue; }
+      if(BIN_EXT.test(hh.name) || (flt && !flt.test(hh.name))) continue;
+      var f; try{ f=await hh.getFile(); }catch(e){ continue; }
+      if(f.size>20e6) continue;
+      st.files++;
+      var buf=await f.arrayBuffer(); if(isBinary(buf)) continue;
+      var text=decodeBytes(buf).text;
+      (function(hh, p){ scanMatches(text, re, 2000-st.items.length, function(it){ it.file=root.name+'/'+p; it.path=root.name+'/'+p; it.h=hh; return it; }).forEach(function(it){ st.items.push(it); }); })(hh, p);
+      if(st.items.length>=2000){ st.stop=true; return; }
+      if(st.files%25===0) tick();
+    }
+  }
+  walk(root, '').then(function(){ finish(st.items, st.files, st.stop); }).catch(function(e){ toast('찾는 중 오류: '+e.message, true); });
+}
+$('fifInput').addEventListener('keydown', function(e){ if(e.key==='Enter' && !e.isComposing){ e.preventDefault(); runFindInFiles(); } });
+$('fifFilter').addEventListener('keydown', function(e){ if(e.key==='Enter' && !e.isComposing){ e.preventDefault(); runFindInFiles(); } });
+$('fifGo').addEventListener('click', runFindInFiles);
+[['fifCase','case'],['fifWord','word'],['fifRe','re']].forEach(function(p){ $(p[0]).addEventListener('click', function(){ fifOpts[p[1]]=!fifOpts[p[1]]; this.classList.toggle('on', fifOpts[p[1]]); }); });
+
+// ================= 자동 완성 (Ctrl+Space 눌렀을 때만) =================
+var ac={ open:false, items:[], sel:0, start:0, prefix:'', d:null, ln:0, col0:0 };
+var acBox=$('acBox');
+function acWordRe(d){ var L=LANGS[d.lang]||LANGS.text, re=L.wordRe||WORD; return new RegExp(re.source, 'g'); }
+function acWords(d){
+  if(d._acw && d._acw.ver===d.ver) return d._acw.words;
+  var txt=d.text.length>2e6 ? d.text.slice(0, 2e6) : d.text, re=acWordRe(d), set=new Set(), m;
+  while((m=re.exec(txt))){ if(m[0].length>1 && m[0].length<64) set.add(m[0]); if(set.size>60000) break; }
+  d._acw={ ver:d.ver, words:set }; return set;
+}
+function acPrefixAt(d){
+  var a=sA(d), ln=lineOf(d.ls, a), t=lineText(d, ln), col=a-d.ls[ln], re=acWordRe(d), start=col, m;
+  // 커서 앞에서 끝나는 단어를 찾는다
+  re.lastIndex=0;
+  while((m=re.exec(t)) && m.index<col){ if(m.index+m[0].length>=col){ start=m.index; break; } }
+  return { ln:ln, start:start, prefix:t.slice(start, col) };
+}
+function acCandidates(d, prefix){
+  var L=LANGS[d.lang]||LANGS.text, ci=!!L.ci, pl=prefix.toLowerCase(), up=prefix===prefix.toUpperCase() && /[A-Z]/.test(prefix), out=[], seen=new Set();
+  var add=function(w, kind){ var key=ci?w.toLowerCase():w; if(w===prefix || seen.has(key)) return; if((ci?key:w.toLowerCase()).indexOf(pl)!==0) return; seen.add(key); out.push({ w:w, k:kind, exact:w.indexOf(prefix)===0 }); };
+  acWords(d).forEach(function(w){ add(w, ''); });
+  [[L.kw,'키워드'],[L.ty,'타입'],[L.bi,'내장']].forEach(function(p){ if(p[0]) p[0].forEach(function(w){ add(ci && up ? w.toUpperCase() : w, p[1]); }); });
+  out.sort(function(a,b){ return (b.exact-a.exact) || (a.w.length-b.w.length) || (a.w<b.w?-1:1); });
+  return out.slice(0, 60);
+}
+function autocomplete(d){
+  if(sA(d)!==sB(d) || d.col || d.vsel) return;
+  var p=acPrefixAt(d);
+  if(!p.prefix) return toast('단어의 첫 글자를 친 뒤 Ctrl+Space를 누르세요');
+  var items=acCandidates(d, p.prefix);
+  if(!items.length) return toast('"'+p.prefix+'"로 시작하는 단어가 없어요');
+  if(items.length===1) return acAccept(d, p, items[0].w);
+  ac={ open:true, items:items, sel:0, start:p.start, prefix:p.prefix, d:d, ln:p.ln };
+  acRender(); acPosition();
+}
+function acRender(){
+  var html=[], pl=ac.prefix.length;
+  ac.items.forEach(function(it, i){ html.push('<div data-i="'+i+'" class="'+(i===ac.sel?'sel':'')+'"><span><b>'+esc(it.w.slice(0,pl))+'</b>'+esc(it.w.slice(pl))+'</span><span class="k">'+it.k+'</span></div>'); });
+  acBox.innerHTML=html.join(''); acBox.classList.remove('hidden');
+  var el=acBox.querySelector('.sel'); if(el) el.scrollIntoView({ block:'nearest' });
+}
+function acPosition(){
+  var d=ac.d; if(!d || d!==active) return acClose();
+  var sc=scroller(d), t=lineText(d, ac.ln), x=PAD_LEFT+xOf(t, ac.start)-sc.scrollLeft+codeWrap.offsetLeft, y=PAD_TOP+(ac.ln+1)*LH-sc.scrollTop;
+  var host=$('editorHost'), W=host.clientWidth, H=host.clientHeight, bw=acBox.offsetWidth, bh=acBox.offsetHeight;
+  if(x+bw>W) x=Math.max(0, W-bw-4);
+  if(y+bh>H && y-LH-bh>=0) y=y-LH-bh;
+  acBox.style.left=x+'px'; acBox.style.top=y+'px';
+}
+function acRefresh(){
+  var d=ac.d, p=acPrefixAt(d);
+  if(p.ln!==ac.ln || p.start!==ac.start || !p.prefix) return acClose();
+  ac.prefix=p.prefix; ac.items=acCandidates(d, p.prefix); ac.sel=0;
+  if(!ac.items.length) return acClose();
+  acRender(); acPosition();
+}
+function acAccept(d, p, word){
+  acClose();
+  var s=d.ls[p.ln]+p.start, e=d.ls[p.ln]+p.start+p.prefix.length;
+  edit(d, s, e, word, s+word.length);
+}
+function acClose(){ ac.open=false; ac.d=null; acBox.classList.add('hidden'); acBox.innerHTML=''; }
+function acKey(e, d){
+  var k=e.key;
+  if(k==='ArrowDown'){ e.preventDefault(); ac.sel=(ac.sel+1)%ac.items.length; acRender(); return true; }
+  if(k==='ArrowUp'){ e.preventDefault(); ac.sel=(ac.sel-1+ac.items.length)%ac.items.length; acRender(); return true; }
+  if(k==='PageDown'){ e.preventDefault(); ac.sel=Math.min(ac.items.length-1, ac.sel+8); acRender(); return true; }
+  if(k==='PageUp'){ e.preventDefault(); ac.sel=Math.max(0, ac.sel-8); acRender(); return true; }
+  if(k==='Enter' || k==='Tab'){ if(e.isComposing) return false; e.preventDefault(); acAccept(d, { ln:ac.ln, start:ac.start, prefix:ac.prefix }, ac.items[ac.sel].w); return true; }
+  if(k==='Escape'){ e.preventDefault(); acClose(); return true; }
+  if(/^(ArrowLeft|ArrowRight|Home|End)$/.test(k) || ((e.ctrlKey||e.metaKey) && k.length===1)) acClose();
+  return false;
+}
+acBox.addEventListener('mousedown', function(e){ e.preventDefault(); var it=e.target.closest('[data-i]'); if(it && ac.d) acAccept(ac.d, { ln:ac.ln, start:ac.start, prefix:ac.prefix }, ac.items[+it.dataset.i].w); });
+codeWrap.addEventListener('mousedown', function(){ if(ac.open) acClose(); });
+
+// ================= 최근 파일 =================
+var recent=[];
+function addRecent(d){
+  if(!d.handle && !d.hostPath) return;
+  var key=(d.hostPath||d.path||'').toLowerCase();
+  recent=recent.filter(function(r){ return (r.hostPath||r.path||'').toLowerCase()!==key; });
+  recent.unshift({ name:d.name, path:fullPath(d), hostPath:d.hostPath||null, handle:d.handle||null, t:Date.now() });
+  if(recent.length>15) recent.length=15;
+  idbSet('recent', recent).catch(function(){});
+}
+function renderRecent(){
+  var m=$('menuRecent'), html=[];
+  if(!recent.length) html.push('<div class="row" style="color:var(--muted)">최근에 연 파일이 없어요</div>');
+  recent.forEach(function(r, i){ html.push('<button data-recent="'+i+'" title="'+esc(r.path)+'"><span>'+esc(r.name)+'<span class="sub">'+esc(r.path)+'</span></span></button>'); });
+  if(recent.length) html.push('<hr><button data-recent="clear">목록 지우기</button>');
+  m.innerHTML=html.join('');
+}
+document.querySelector('[data-menu="menuRecent"]').addEventListener('click', renderRecent, true);
+$('menuRecent').addEventListener('click', function(e){
+  var b=e.target.closest('[data-recent]'); if(!b) return;
+  if(b.dataset.recent==='clear'){ recent=[]; idbSet('recent', recent).catch(function(){}); toast('최근 파일 목록을 지웠어요'); return; }
+  var r=recent[+b.dataset.recent]; if(!r) return;
+  if(r.hostPath && HOST) hostOpenPath(r.hostPath);
+  else if(r.handle) openHandle(r.handle, r.path);
+  else toast('이 파일은 exe 버전에서 연 파일이라 여기서는 열 수 없어요');
+});
+
+// ================= 열 편집 (숫자·글자 채우기) =================
+function openColEditor(){
+  var d=active; if(!d) return;
+  if(!d.col && lineOf(d.ls, sA(d))===lineOf(d.ls, Math.max(sA(d), sB(d)-1))) return toast('Alt+드래그로 블록을 잡거나 여러 줄을 선택한 뒤 쓰세요');
+  $('colModal').classList.remove('hidden');
+  (document.querySelector('input[name=colMode]:checked').value==='num' ? $('colStart') : $('colText')).focus();
+}
+function colEditorApply(){
+  var d=active; if(!d) return;
+  var mode=document.querySelector('input[name=colMode]:checked').value, txt=$('colText').value, start=+$('colStart').value||0, step=+$('colStep').value||0, zero=$('colZero').checked;
+  var la, lb;
+  if(d.col){ var bx=colBox(d); la=bx.top; lb=bx.bot; }
+  else { la=lineOf(d.ls, sA(d)); lb=lineOf(d.ls, Math.max(sA(d), sB(d)-1)); }
+  var vals=[]; for(var k=0;k<=lb-la;k++) vals.push(mode==='num' ? String(start+step*k) : txt);
+  if(mode==='num' && zero){ var w=Math.max.apply(null, vals.map(function(v){ return v.replace('-','').length; })); vals=vals.map(function(v){ var neg=v[0]==='-'; v=v.replace('-',''); while(v.length<w) v='0'+v; return (neg?'-':'')+v; }); }
+  $('colModal').classList.add('hidden');
+  d.ta.focus();
+  if(d.col){ colApply(d, function(t,i1,i2,kk){ return [t.slice(0,i1)+vals[kk]+t.slice(i2), i1+vals[kk].length]; }); return; }
+  var col=sA(d)-d.ls[la], out=[];
+  for(var j=la;j<=lb;j++){ var t=lineText(d,j), c=Math.min(col, t.length); out.push(t.slice(0,c)+vals[j-la]+t.slice(c)); }
+  var s=d.ls[la], e=lineEnd(d, lb), res=out.join('\n');
+  edit(d, s, e, res, s, s+res.length);
+}
+$('colOk').addEventListener('click', colEditorApply);
+$('colModal').addEventListener('keydown', function(e){ if(e.key==='Enter' && !e.isComposing && e.target.tagName!=='BUTTON'){ e.preventDefault(); colEditorApply(); } });
+
+// ================= 저장 옵션 =================
+function applySaveOptions(d){
+  if(!settings.trimSave && !settings.finalNl) return;
+  var text=d.text;
+  if(settings.trimSave) text=text.replace(/[ \t\u3000]+$/gm, '');
+  if(settings.finalNl && text && text[text.length-1]!=='\n') text+='\n';
+  if(text===d.text) return;
+  var sel=[sA(d), sB(d)], sc=getScroll(d);
+  setValue(d, text);
+  try{ setSel(d, Math.min(sel[0], text.length), Math.min(sel[1], text.length)); }catch(e){}
+  if(d===active) setScroll(d, sc);
+}
+
 // ================= 명령 =================
 function edCmd(fn){ return function(){ if(active && !active.grid){ exitCol(active); fn(active); } }; }
 var CMDS={
@@ -2771,6 +3160,11 @@ var CMDS={
   swapCompare:function(){ if(!cmp) return; var a=cmp.a, b=cmp.b; activate(b, true); compareStart(a); },
   matchBrace:edCmd(matchBrace),
   outline:function(){ openOutline(); },
+  findAll:findAllInDoc, findInFiles:openFindInFiles, nextResult:function(){ resultStep(1); }, prevResult:function(){ resultStep(-1); },
+  closeResults:closeResults, bookmarkResults:bookmarkResults,
+  autocomplete:edCmd(autocomplete),
+  colEditor:function(){ if(active && !active.grid) openColEditor(); },
+  toggleWs:function(){ settings.showWs=!settings.showWs; saveSettings(); $('setWs').checked=settings.showWs; requestRender(); },
   toggleBookmark:edCmd(function(d){ toggleBookmarkAt(d, lineOf(d.ls, sA(d))); }),
   nextBookmark:edCmd(function(d){ bookmarkStep(d, 1); }), prevBookmark:edCmd(function(d){ bookmarkStep(d, -1); }),
   clearBookmarks:edCmd(function(d){ var n=d.bm.size; d.bm=new Set(); requestRender(); scheduleSnapshot(); toast(n?'북마크 '+n+'개를 지웠어요':'북마크가 없어요'); }),
@@ -2821,10 +3215,12 @@ var KEYMAP=[
   ['lineAbove','위에 줄 추가','Ctrl+Alt+Enter'], ['lineBelow','아래에 줄 추가','Ctrl+Alt+Shift+Enter'],
   ['toggleComment','주석 켜기/끄기',['Ctrl+Q','Ctrl+/']], ['matchBrace','짝 괄호로 이동','Ctrl+B'],
   ['upper','대문자로','Ctrl+Shift+U'], ['lower','소문자로','Ctrl+U'],
+  ['autocomplete','자동 완성 (문서 단어·키워드)',['Ctrl+Space','Ctrl+Enter']], ['colEditor','열 편집 (숫자·글자 채우기)','Alt+C'], ['toggleWs','공백·탭·줄 끝 표시',''],
   ['trimLeading','시작 공백 삭제',''], ['trimTrailing','끝 공백 삭제',''], ['trimBoth','시작과 끝 공백 삭제',''],
   ['sortAsc','줄 정렬 (오름차순)',''], ['sortDesc','줄 정렬 (내림차순)',''], ['dedupe','중복 줄 제거',''], ['removeBlank','빈 줄 제거',''], ['tabsToSpaces','탭 → 공백',''],
   ['h','찾기'],
   ['find','찾기','Ctrl+F'], ['replace','바꾸기','Ctrl+H'], ['findNext','다음 찾기','F3'], ['findPrev','이전 찾기','Shift+F3'], ['gotoLine','줄로 이동','Ctrl+G'],
+  ['findAll','현재 문서에서 모두 찾기 (결과 목록)',''], ['findInFiles','폴더에서 찾기','Ctrl+Shift+F'], ['nextResult','다음 찾기 결과','F4'], ['prevResult','이전 찾기 결과','Shift+F4'],
   ['h','북마크·구조'],
   ['toggleBookmark','북마크 켜기/끄기','Ctrl+F2'], ['nextBookmark','다음 북마크','F2'], ['prevBookmark','이전 북마크','Shift+F2'], ['clearBookmarks','북마크 모두 지우기','Ctrl+Shift+F2'],
   ['outline','구조 목록 (함수·메서드·클래스)',['Ctrl+Shift+O','Ctrl+Alt+O']],
@@ -2836,7 +3232,7 @@ var KEYMAP=[
   ['fontUp','글꼴 크게',['Ctrl+Num+','Ctrl+=']], ['fontDown','글꼴 작게',['Ctrl+Num-','Ctrl+-']], ['fontReset','글꼴 기본 크기',['Ctrl+Num/','Ctrl+0']],
   ['help','단축키 보기·바꾸기','F1']
 ];
-var ED_CMDS={ dupLine:1, delLine:1, moveUp:1, moveDown:1, lineBelow:1, lineAbove:1, toggleComment:1, upper:1, lower:1, matchBrace:1 };
+var ED_CMDS={ dupLine:1, delLine:1, moveUp:1, moveDown:1, lineBelow:1, lineAbove:1, toggleComment:1, upper:1, lower:1, matchBrace:1, autocomplete:1, colEditor:1 };
 var keyLookup={};
 function keysOf(id){
   var v;
@@ -2876,7 +3272,8 @@ function renderKeys(){
     '저장하지 않은 내용도 1초마다 브라우저 안에 임시 저장돼요. 창을 닫았다 열어도 탭이 그대로 돌아와요.<br>'+
     '"파일 자동 저장"을 켜면 한 번 저장한 파일은 편집하고 2초 뒤 디스크에도 저장돼요.<br>'+
     '열어 둔 파일을 다른 프로그램이 고치면 자동으로 다시 불러와요. 편집 중이던 탭이면 어떻게 할지 물어봐요.<br>'+
-    'ABAP에서는 IF·LOOP·FORM·METHOD 같은 줄에서 Ctrl+B를 누르면 짝이 되는 END 줄로 가요.</div>');
+    'ABAP에서는 IF·LOOP·FORM·METHOD 같은 줄에서 Ctrl+B를 누르면 짝이 되는 END 줄로 가요.<br>'+
+    '자동 완성은 Ctrl+Space를 눌렀을 때만 나와요 (문서에 있는 단어와 문법 키워드). 열 편집(Alt+C)은 블록이나 여러 줄을 선택한 뒤 숫자·글자를 모든 줄의 같은 칸에 넣어요.</div>');
   box.innerHTML=html.join('');
 }
 $('keysList').addEventListener('click', function(e){
@@ -2913,6 +3310,7 @@ document.addEventListener('keydown', function(e){
     CMDS[cmd](); return;
   }
   if(e.altKey && !e.ctrlKey && !e.shiftKey && /^Digit[1-9]$/.test(e.code)){ var t=docs[+e.code.slice(5)-1]; if(t){ e.preventDefault(); activate(t); } return; }
+  if(e.key==='Escape' && ac.open){ e.preventDefault(); acClose(); return; }
   if(e.key==='Escape'){
     var open=document.querySelector('.modal-bg:not(.hidden)');
     if(open){ open.classList.add('hidden'); if(active) active.ta.focus(); return; }
@@ -2937,6 +3335,9 @@ $('setFont').addEventListener('change', function(){ settings.font=this.value; sa
 $('setTab').addEventListener('change', function(){ settings.tab=+this.value; saveSettings(); applySettings(); requestRender(); });
 $('setSpaces').addEventListener('change', function(){ settings.spaces=this.checked; saveSettings(); });
 $('setHidden').addEventListener('change', function(){ settings.showHidden=this.checked; saveSettings(); if(root) renderTree(); });
+$('setWs').addEventListener('change', function(){ settings.showWs=this.checked; saveSettings(); requestRender(); });
+$('setTrimSave').addEventListener('change', function(){ settings.trimSave=this.checked; saveSettings(); });
+$('setFinalNl').addEventListener('change', function(){ settings.finalNl=this.checked; saveSettings(); });
 $('setAutoSave').addEventListener('change', function(){ settings.autoSave=this.checked; saveSettings(); toast(this.checked?'한 번 저장한 파일은 편집하고 2초 뒤에 자동으로 저장돼요':'파일 자동 저장을 껐어요 (임시 저장은 계속돼요)'); });
 
 $('gutter').addEventListener('wheel', function(e){ if(active){ e.preventDefault(); var sc=scroller(active); sc.scrollTop+=e.deltaY; sc.scrollLeft+=e.deltaX; } }, { passive:false });
@@ -3025,6 +3426,7 @@ var ready=restore().catch(function(e){ console.error(e); return false; }).then(f
   if(h && h.hostRoot){ h=HOST ? new HostDir(h.hostRoot) : null; }
   if(h){ root=h; expanded=new Set(['']); }
   renderTree();
+  idbGet('recent').then(function(r){ if(Array.isArray(r)) recent=r; }).catch(function(){});
   if(HOST) window.chrome.webview.postMessage({ type:'ready' });
   if(!FS_API) toast('이 브라우저는 파일 직접 저장을 지원하지 않아서, 저장하면 다운로드 폴더로 내려받아요');
 });
@@ -3033,7 +3435,7 @@ if('launchQueue' in window) window.launchQueue.setConsumer(function(p){
   if(!p.files || !p.files.length) return;
   ready.then(function(){ p.files.forEach(function(h){ openHandle(h, h.name); }); });
 });
-window.__webpad={ docs:function(){ return docs; }, active:function(){ return active; }, lineText:lineText, render:render, setSel:setSel, undo:undoCmd, edit:edit, cmd:function(k){ CMDS[k](); }, check:checkAllExternal, outline:buildOutline,
+window.__webpad={ docs:function(){ return docs; }, active:function(){ return active; }, lineText:lineText, render:render, setSel:setSel, undo:undoCmd, edit:edit, cmd:function(k){ CMDS[k](); }, check:checkAllExternal, outline:buildOutline, results:function(){ return results; }, ac:function(){ return ac; }, setRoot:setRoot, acCandidates:acCandidates, fif:runFindInFiles, bracePair:bracePair, recent:function(){ return recent; },
   hostCall:HOST?hostCall:null, setHostRoot:function(p){ setRoot(new HostDir(p)); }, openPath:HOST?hostOpenPath:null };
 })();
 </script>

@@ -13,6 +13,8 @@ using System.IO;
 using System.Reflection;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
+using System.Text;
+using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Web.Script.Serialization;
@@ -24,8 +26,8 @@ using Microsoft.Web.WebView2.WinForms;
 [assembly: AssemblyTitle("WebPad")]
 [assembly: AssemblyProduct("WebPad")]
 [assembly: AssemblyDescription("웹패드 - 가벼운 코드 편집기")]
-[assembly: AssemblyVersion("1.2.5.0")]
-[assembly: AssemblyFileVersion("1.2.5.0")]
+[assembly: AssemblyVersion("1.2.6.0")]
+[assembly: AssemblyFileVersion("1.2.6.0")]
 
 static class Program
 {
@@ -337,6 +339,7 @@ class MainForm : Form
             Dictionary<string, object> reply = new Dictionary<string, object>();
             reply["type"] = "reply";
             reply["id"] = m["id"];
+            if (type == "grep") { GrepAsync(m, reply); return; }
             try
             {
                 if (type == "dropPaths") DropPaths(e, reply); else HostCall(type, m, reply);
@@ -361,6 +364,96 @@ class MainForm : Form
             }
         reply["files"] = files;
         reply["dirs"] = dirs;
+    }
+
+    // 폴더 전체에서 찾기: 오래 걸릴 수 있어 다른 스레드에서 돌리고 끝나면 답을 보낸다
+    void GrepAsync(Dictionary<string, object> m, Dictionary<string, object> reply)
+    {
+        string path = m["path"] as string, pattern = m["pattern"] as string, filter = m.ContainsKey("filter") ? m["filter"] as string : "";
+        bool ignoreCase = m.ContainsKey("ignoreCase") && m["ignoreCase"] is bool && (bool)m["ignoreCase"];
+        bool showHidden = m.ContainsKey("hidden") && m["hidden"] is bool && (bool)m["hidden"];
+        int max = m.ContainsKey("max") ? Convert.ToInt32(m["max"]) : 2000;
+        System.Threading.Tasks.Task.Factory.StartNew(() =>
+        {
+            try { Grep(path, pattern, ignoreCase, filter, showHidden, max, reply); reply["ok"] = true; }
+            catch (Exception ex) { reply["ok"] = false; reply["error"] = ex.Message; }
+            try { BeginInvoke((Action)(() => { if (web.CoreWebView2 != null) web.CoreWebView2.PostWebMessageAsJson(json.Serialize(reply)); })); } catch (Exception) { }
+        });
+    }
+
+    static Regex GlobRegex(string filter)
+    {
+        if (string.IsNullOrWhiteSpace(filter)) return null;
+        List<string> parts = new List<string>();
+        foreach (string g in filter.Split(new[] { ';', ',', ' ' }, StringSplitOptions.RemoveEmptyEntries))
+            parts.Add(Regex.Escape(g).Replace("\\*", ".*").Replace("\\?", "."));
+        return new Regex("^(?:" + string.Join("|", parts.ToArray()) + ")$", RegexOptions.IgnoreCase);
+    }
+
+    static readonly Regex BinExt = new Regex(@"\.(exe|dll|bin|obj|pdb|png|jpe?g|gif|bmp|ico|webp|zip|7z|rar|gz|tar|pdf|docx?|xlsx?|pptx?|mp3|mp4|avi|mov|wav|ttf|otf|woff2?|class|jar|pyc|so|dylib|iso|msi|dat)$", RegexOptions.IgnoreCase);
+
+    static string ReadText(byte[] b)
+    {
+        if (b.Length >= 3 && b[0] == 0xEF && b[1] == 0xBB && b[2] == 0xBF) return Encoding.UTF8.GetString(b, 3, b.Length - 3);
+        if (b.Length >= 2 && b[0] == 0xFF && b[1] == 0xFE) return Encoding.Unicode.GetString(b, 2, b.Length - 2);
+        if (b.Length >= 2 && b[0] == 0xFE && b[1] == 0xFF) return Encoding.BigEndianUnicode.GetString(b, 2, b.Length - 2);
+        try { return new UTF8Encoding(false, true).GetString(b); }
+        catch (Exception) { return Encoding.GetEncoding(949).GetString(b); }
+    }
+
+    static void Grep(string rootPath, string pattern, bool ignoreCase, string filter, bool showHidden, int max, Dictionary<string, object> reply)
+    {
+        Regex re = new Regex(pattern, (ignoreCase ? RegexOptions.IgnoreCase : RegexOptions.None) | RegexOptions.Multiline, TimeSpan.FromSeconds(3));
+        Regex flt = GlobRegex(filter);
+        List<object> items = new List<object>();
+        Stack<string> stack = new Stack<string>();
+        stack.Push(rootPath);
+        int files = 0; bool truncated = false;
+        while (stack.Count > 0 && !truncated && files < 20000)
+        {
+            string dir = stack.Pop();
+            IEnumerable<FileSystemInfo> entries;
+            try { entries = new DirectoryInfo(dir).EnumerateFileSystemInfos(); } catch (Exception) { continue; }
+            foreach (FileSystemInfo fi in entries)
+            {
+                if (truncated) break;
+                if (!showHidden && IsHiddenSystem(fi)) continue;
+                if ((fi.Attributes & FileAttributes.Directory) != 0) { if (!SkipDirs.Contains(fi.Name)) stack.Push(fi.FullName); continue; }
+                if (BinExt.IsMatch(fi.Name) || (flt != null && !flt.IsMatch(fi.Name))) continue;
+                FileInfo f = fi as FileInfo;
+                if (f == null || f.Length > 20L * 1024 * 1024) continue;
+                byte[] bytes;
+                try { bytes = File.ReadAllBytes(f.FullName); } catch (Exception) { continue; }
+                files++;
+                int lim = Math.Min(bytes.Length, 8000); bool bin = false;
+                for (int i = 0; i < lim; i++) if (bytes[i] == 0) { bin = true; break; }
+                if (bin) continue;
+                string text = ReadText(bytes);
+                int line = 0, lastIdx = 0;
+                try
+                {
+                    foreach (Match mt in re.Matches(text))
+                    {
+                        if (mt.Length == 0) continue;
+                        for (int i = lastIdx; i < mt.Index; i++) if (text[i] == '\n') line++;
+                        lastIdx = mt.Index;
+                        int ls = mt.Index == 0 ? 0 : text.LastIndexOf('\n', mt.Index - 1) + 1;
+                        int le = text.IndexOf('\n', mt.Index); if (le < 0) le = text.Length;
+                        string lt = text.Substring(ls, le - ls).TrimEnd('\r');
+                        int col = mt.Index - ls, len = Math.Min(mt.Length, le - mt.Index);
+                        if (lt.Length > 400) { int cut = Math.Max(0, col - 80); lt = (cut > 0 ? "…" : "") + lt.Substring(cut, Math.Min(400, lt.Length - cut)); col = col - cut + (cut > 0 ? 1 : 0); }
+                        Dictionary<string, object> it = new Dictionary<string, object>();
+                        it["path"] = f.FullName; it["line"] = line; it["col"] = col; it["len"] = len; it["text"] = lt;
+                        items.Add(it);
+                        if (items.Count >= max) { truncated = true; break; }
+                    }
+                }
+                catch (RegexMatchTimeoutException) { }
+            }
+        }
+        reply["items"] = items;
+        reply["files"] = files;
+        reply["truncated"] = truncated;
     }
 
     // 파일 수정 시각 (1970년 기준 밀리초, 자바스크립트 Date와 같은 단위)

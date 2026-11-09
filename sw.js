@@ -1,5 +1,5 @@
 // 오프라인에서도 열리게 앱 파일을 보관한다. 화면(html)은 새 버전을 먼저 시도하고, 나머지는 보관본을 쓴다.
-const CACHE = 'webpad-v7';
+const CACHE = 'webpad-v8';
 const FILES = ['./', 'index.html', 'manifest.webmanifest', 'icons/icon.svg', 'icons/icon-192.png',
   'fonts/NanumGothicCoding-R.woff2', 'fonts/NanumGothicCoding-B.woff2'];
 
