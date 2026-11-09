@@ -65,6 +65,9 @@
   .menu{ position:absolute; top:calc(100% + 4px); left:0; z-index:50; min-width:230px; background:var(--bg); border:1px solid var(--line);
     border-radius:8px; box-shadow:0 8px 28px rgba(0,0,0,.18); padding:4px; display:none; }
   .menu.right{ left:auto; right:0; }
+  .menu.langs{ max-height:70vh; overflow-y:auto; min-width:200px; }
+  .menu button.cur{ color:var(--accent); font-weight:700; }
+  .menu button.cur::after{ content:'✓'; }
   .menu.open{ display:block; }
   .menu button{ display:flex; justify-content:space-between; gap:16px; width:100%; text-align:left; background:none; border:none; padding:6px 10px; border-radius:5px; cursor:pointer; }
   .menu button:hover{ background:var(--accent-soft); }
@@ -265,6 +268,10 @@
         <button data-cmd="jsonSort">키 이름순 정렬 <kbd data-key="jsonSort"></kbd></button>
         <button data-cmd="jsonValidate">문법 검사 <kbd data-key="jsonValidate"></kbd></button>
       </div>
+    </div>
+    <div class="menu-wrap">
+      <button class="tb" data-menu="menuLang" id="langBtn" title="문법(언어) 고르기">언어 ▾</button>
+      <div class="menu langs" id="menuLang"></div>
     </div>
     <button class="tb" data-cmd="toggleGrid" id="gridBtn" title="CSV를 표로 편집">CSV 표</button>
     <button class="tb" data-cmd="compare" title="두 탭 비교 (Ctrl+Alt+C)">비교</button>
@@ -521,8 +528,26 @@ function buildLangs(){
   LANGS={};
   loadUdlSpecs().forEach(function(s){ LANGS[s.id]=compileLang(s.id, s); });
   Object.keys(SPECS).forEach(function(id){ LANGS[id]=compileLang(id, SPECS[id]); });
-  var sel=$('stLang'); sel.innerHTML='';
-  Object.keys(LANGS).forEach(function(id){ var o=document.createElement('option'); o.value=id; o.textContent=LANGS[id].name; sel.appendChild(o); });
+  var sel=$('stLang'), menu=$('menuLang'); sel.innerHTML=''; menu.innerHTML='';
+  Object.keys(LANGS).forEach(function(id){
+    var o=document.createElement('option'); o.value=id; o.textContent=LANGS[id].name; sel.appendChild(o);
+    var b=document.createElement('button'); b.dataset.lang=id; b.textContent=LANGS[id].name; menu.appendChild(b);
+  });
+  updateLangUi();
+}
+function updateLangUi(){
+  if(typeof active==='undefined' || !active) return;
+  var L=LANGS[active.lang]||LANGS.text;
+  $('langBtn').textContent='언어: '+L.name+' ▾';
+  $('stLang').value=active.lang;
+  document.querySelectorAll('#menuLang button').forEach(function(b){ b.classList.toggle('cur', b.dataset.lang===active.lang); });
+}
+function setLang(d, id){
+  if(!d || !LANGS[id]) return;
+  d.lang=id; d.states=[null]; d.stDirty=0; d.stEnd=0;
+  if(id==='csv' && !d.delim) d.delim=detectDelim(d.text, d.name);
+  if(id!=='csv' && d.grid) toggleGrid();
+  updateLangUi(); requestRender(); updateStatus(); scheduleSnapshot();
 }
 function langForName(name){
   var m=/\.([^.]+)$/.exec(name||''), ext=m?m[1].toLowerCase():'';
@@ -966,6 +991,15 @@ function renderTabs(){
 function updateTabDirty(d){
   var el=$('tabbar').children[docs.indexOf(d)];
   if(el) el.classList.toggle('dirty', isDirty(d));
+  if(d===active) updateTitle();
+}
+// exe로 연 파일은 전체 경로, 브라우저에서 연 파일은 브라우저가 알려주는 만큼(폴더 이름/상대 경로)
+function fullPath(d){ return d.hostPath || d.path || d.name; }
+var lastTitle='';
+function updateTitle(){
+  if(!active) return;
+  var t=(isDirty(active) && active.text!=='' ? '*' : '')+fullPath(active)+' - 웹패드';
+  if(t!==lastTitle){ lastTitle=t; document.title=t; }
 }
 function activate(d, noFocus){
   if(!d) return;
@@ -980,7 +1014,7 @@ function activate(d, noFocus){
   $('stBig').classList.toggle('hidden', !d.big);
   setGridVisible(d.grid);
   renderTabs(); updateGutterWidth(); requestRender(); updateStatus(); highlightTreeActive();
-  document.title=d.name+' - 웹패드';
+  updateTitle(); updateLangUi();
   if(!noFocus && !d.grid) d.ta.focus();
   if(findOpen) refreshFind();
   scheduleSnapshot();
@@ -1510,12 +1544,10 @@ $('stEnc').addEventListener('change', function(){
   active.enc=this.value; active.savedText=null; updateTabDirty(active); scheduleSnapshot();
   toast('다음 저장부터 '+this.options[this.selectedIndex].text+'(으)로 저장해요');
 });
-$('stLang').addEventListener('change', function(){
-  if(!active) return;
-  active.lang=this.value; active.states=[null];
-  if(active.lang==='csv' && !active.delim) active.delim=detectDelim(active.text, active.name);
-  if(active.lang!=='csv' && active.grid) toggleGrid();
-  requestRender(); updateStatus(); scheduleSnapshot();
+$('stLang').addEventListener('change', function(){ setLang(active, this.value); });
+$('menuLang').addEventListener('click', function(e){
+  var b=e.target.closest('[data-lang]'); if(!b) return;
+  this.classList.remove('open'); setLang(active, b.dataset.lang); if(active) active.ta.focus();
 });
 
 // ================= 찾기·바꾸기 =================
@@ -1989,7 +2021,7 @@ function jsonApply(kind){
   var out=kind==='minify'?JSON.stringify(val):JSON.stringify(val, null, settings.spaces?' '.repeat(settings.tab):'  ');
   if(t.s===0 && t.e===d.text.length){
     setAllText(d, out, 0);
-    if(d.lang==='text'){ d.lang='json'; d.states=[null]; $('stLang').value='json'; }
+    if(d.lang==='text') setLang(d, 'json');
   }else edit(d, t.s, t.e, out, t.s, t.s+out.length);
   scroller(d).scrollTop=0; requestRender(); updateStatus();
 }
@@ -2268,7 +2300,7 @@ $('udlInput').addEventListener('change', function(){
   f.text().then(function(xml){
     var names=importUdl(xml); buildLangs();
     docs.forEach(function(d){ var l=langForName(d.name); if(l.indexOf('udl_')===0){ d.lang=l; d.states=[null]; } });
-    if(active) $('stLang').value=active.lang;
+    updateLangUi();
     requestRender(); toast(names.join(', ')+' 문법을 불러왔어요');
   }).catch(function(e){ toast('불러오지 못했어요: '+e.message, true); });
 });
@@ -2359,7 +2391,7 @@ var CMDS={
   fontDown:function(){ settings.fs=Math.max(9, settings.fs-1); saveSettings(); gwDigits=0; applySettings(); updateGutterWidth(); requestRender(); },
   fontReset:function(){ settings.fs=14; saveSettings(); gwDigits=0; applySettings(); updateGutterWidth(); requestRender(); },
   importUdl:function(){ $('udlInput').click(); },
-  clearUdl:function(){ localStorage.removeItem('webpad_udl'); buildLangs(); docs.forEach(function(d){ if(!LANGS[d.lang]){ d.lang=langForName(d.name); d.states=[null]; } }); if(active) $('stLang').value=active.lang; requestRender(); toast('불러온 사용자 언어를 지웠어요'); },
+  clearUdl:function(){ localStorage.removeItem('webpad_udl'); buildLangs(); docs.forEach(function(d){ if(!LANGS[d.lang]){ d.lang=langForName(d.name); d.states=[null]; } }); updateLangUi(); requestRender(); toast('불러온 사용자 언어를 지웠어요'); },
   help:function(){ renderKeys(); $('helpModal').classList.remove('hidden'); },
   getExe:function(){ window.open(EXE_URL, '_blank', 'noopener'); },
   install:function(){ if(installEvt){ installEvt.prompt(); installEvt=null; $('installBtn').classList.add('hidden'); } }

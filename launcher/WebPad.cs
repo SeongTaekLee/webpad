@@ -24,8 +24,8 @@ using Microsoft.Web.WebView2.WinForms;
 [assembly: AssemblyTitle("WebPad")]
 [assembly: AssemblyProduct("WebPad")]
 [assembly: AssemblyDescription("웹패드 - 가벼운 코드 편집기")]
-[assembly: AssemblyVersion("1.1.0.0")]
-[assembly: AssemblyFileVersion("1.1.0.0")]
+[assembly: AssemblyVersion("1.2.1.0")]
+[assembly: AssemblyFileVersion("1.2.1.0")]
 
 static class Program
 {
