@@ -2,12 +2,16 @@
 <html lang="ko">
 <head>
 <meta charset="UTF-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; font-src 'self' data:; img-src 'self' data: blob:; connect-src 'self'; worker-src 'self'; manifest-src 'self'; form-action 'none'; base-uri 'none'">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="color-scheme" content="light dark">
 <meta name="theme-color" content="#2563eb">
 <title>웹패드</title>
-<link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" href="icons/icon.svg" type="image/svg+xml">
+<script>
+  // 앱 설치 정보는 웹에서 열었을 때만 (파일로 열면 불러오지 못해 오류만 남는다)
+  if(location.protocol==='https:' && !(window.chrome && window.chrome.webview)){ var m=document.createElement('link'); m.rel='manifest'; m.href='manifest.webmanifest'; document.head.appendChild(m); }
+</script>
 <style>
   @font-face{ font-family:'WebPadMono'; font-weight:400; font-display:swap;
     src:local('NanumGothicCoding'), url('fonts/NanumGothicCoding-R.woff2') format('woff2'); }
@@ -1689,12 +1693,19 @@ function openFromFile(file, handle, path, hostPath){
   });
 }
 function openHandle(handle, path){
+  if(handle.host) return hostOpenPath(handle.path);
   return findOpenDoc(handle).then(function(ex){
     if(ex){ activate(ex); return; }
     return handle.getFile().then(function(f){ return openFromFile(f, handle, path); });
   }).catch(function(e){ toast('파일을 열 수 없어요: '+e.message, true); });
 }
 function openFile(){
+  if(HOST){
+    hostCall({ type:'pickFiles' }).then(function(r){
+      return r.paths.reduce(function(p, path){ return p.then(function(){ return hostOpenPath(path); }); }, Promise.resolve());
+    }).catch(function(e){ toast(e.message, true); });
+    return;
+  }
   if(!FS_API){ $('fileInput').click(); return; }
   window.showOpenFilePicker({ multiple:true }).then(function(hs){
     return hs.reduce(function(p,h){ return p.then(function(){ return openHandle(h, h.name); }); }, Promise.resolve());
@@ -1727,6 +1738,7 @@ function afterSave(d, bad, downloaded, quiet){
   else if(!quiet) toast(downloaded?'다운로드 폴더에 저장했어요 (이 브라우저는 직접 저장을 지원하지 않아요)':'"'+d.name+'" 저장했어요');
 }
 function ensurePerm(h, write, ask){
+  if(h.host) return Promise.resolve(true);
   var o={ mode:write?'readwrite':'read' };
   return h.queryPermission(o).then(function(p){
     if(p==='granted') return true;
@@ -1743,6 +1755,17 @@ function save(d){
 function saveAs(d){
   d=d||active; if(!d) return;
   if(d.grid) flushGrid();
+  if(HOST){
+    var dir=d.hostPath ? d.hostPath.replace(/[\\/][^\\/]*$/,'') : (root && root.host ? root.path : null);
+    hostCall({ type:'pickSave', name:d.untitled && !/\.\w+$/.test(d.name) ? d.name+'.txt' : d.name, dir:dir }).then(function(r){
+      if(!r.path) return;
+      d.hostPath=r.path; d.handle=null; d.name=baseName(r.path); d.path=r.path;
+      if(d.lang==='text') d.lang=langForName(d.name);
+      d.states=[null]; activate(d);
+      return writeDoc(d);
+    }).catch(function(e){ toast('저장하지 못했어요: '+e.message, true); });
+    return;
+  }
   if(!FS_API){ var n=prompt('파일 이름', d.name); if(!n) return; d.name=n; renderTabs(); return save(d); }
   var name=d.untitled && !/\.\w+$/.test(d.name) ? d.name+'.txt' : d.name;
   window.showSaveFilePicker({ suggestedName:name }).then(function(h){
@@ -1791,12 +1814,20 @@ window.addEventListener('drop', function(e){
 // ================= 폴더 탐색기 =================
 var root=null, expanded=new Set(), SKIP_DIRS={ '.git':1, 'node_modules':1, '__pycache__':1, '.svn':1 };
 function openFolder(){
+  if(HOST){
+    hostCall({ type:'pickFolder', start:root && root.host ? root.path : null }).then(function(r){ if(r.path) setRoot(new HostDir(r.path)); })
+      .catch(function(e){ toast(e.message, true); });
+    return;
+  }
   if(!window.showDirectoryPicker){ toast('이 브라우저는 폴더 열기를 지원하지 않아요. 엣지나 크롬에서 열어주세요', true); return; }
-  window.showDirectoryPicker({ mode:'readwrite' }).then(setRoot).catch(function(e){ if(e.name!=='AbortError') toast(e.message, true); });
+  window.showDirectoryPicker({ mode:'readwrite' }).then(setRoot).catch(function(e){
+    if(e.name==='AbortError') return;
+    toast(e.name==='SecurityError'||/system|시스템/i.test(e.message) ? 'C:\\ 나 사용자 폴더 전체 같은 곳은 브라우저가 막아요. 그 안의 작업 폴더를 골라 주세요 (exe 버전은 어디든 열 수 있어요)' : e.message, true);
+  });
 }
 function setRoot(h){
   root=h; expanded=new Set(['']);
-  idbSet('root', h).catch(function(){});
+  idbSet('root', h.host ? { hostRoot:h.path } : h).catch(function(){});
   if(!settings.sideOpen){ settings.sideOpen=true; saveSettings(); applySettings(); }
   renderTree();
 }
@@ -1862,6 +1893,7 @@ function renderDir(dh, path, depth, container){
 }
 var searchToken=0;
 function renderSearch(q){
+  if(root.host) return renderHostSearch(q);
   var tree=$('tree'), token=++searchToken, ql=q.toLowerCase(), found=0, scanned=0, results=document.createDocumentFragment();
   tree.innerHTML='<div class="side-empty">찾는 중…</div>';
   async function walk(dh, path){
@@ -1887,8 +1919,30 @@ function renderSearch(q){
     tree.appendChild(results); highlightTreeActive();
   });
 }
+function renderHostSearch(q){
+  var tree=$('tree'), token=++searchToken;
+  tree.innerHTML='<div class="side-empty">찾는 중…</div>';
+  return hostCall({ type:'search', path:root.path, q:q, max:300 }).then(function(r){
+    if(token!==searchToken) return;
+    tree.innerHTML='';
+    if(!r.paths.length){ tree.innerHTML='<div class="side-empty">"'+esc(q)+'" 이름의 파일이 없어요</div>'; return; }
+    var base=root.path.replace(/[\\/]+$/,'').length+1;
+    r.paths.forEach(function(p){
+      var rel=p.slice(base).replace(/\\/g,'/'), dir=rel.replace(/\/?[^/]*$/,'');
+      var n=makeNode(baseName(p), 'file', 0, rel);
+      var sub=document.createElement('span'); sub.className='sub'; sub.textContent=dir; n.appendChild(sub);
+      n.addEventListener('click', function(){ hostOpenPath(p); });
+      tree.appendChild(n);
+    });
+    highlightTreeActive();
+  });
+}
 function highlightTreeActive(){
-  var want=active && active.path && root ? active.path.replace(root.name+'/','') : null;
+  var want=null;
+  if(active && root && root.host && active.hostPath){
+    var rp=root.path.replace(/[\\/]+$/,'')+'\\';
+    if(active.hostPath.toLowerCase().indexOf(rp.toLowerCase())===0) want=active.hostPath.slice(rp.length).replace(/\\/g,'/');
+  }else if(active && active.path && root) want=active.path.replace(root.name+'/','');
   document.querySelectorAll('#tree .node').forEach(function(n){ n.classList.toggle('active', !!want && n.dataset.path===want); });
 }
 var filterTimer=0;
@@ -2478,12 +2532,29 @@ if(HOST) document.querySelector('[data-cmd="getExe"]').classList.add('hidden');
 var hostWaits={}, hostSeq=0;
 function b64ToBytes(b64){ var bin=atob(b64), u=new Uint8Array(bin.length); for(var i=0;i<bin.length;i++) u[i]=bin.charCodeAt(i); return u; }
 function bytesToB64(u){ var s='', CH=0x8000; for(var i=0;i<u.length;i+=CH) s+=String.fromCharCode.apply(null, u.subarray(i,i+CH)); return btoa(s); }
-function hostWrite(path, bytes){
+function hostCall(msg){
   return new Promise(function(res, rej){
     var id=++hostSeq; hostWaits[id]={ res:res, rej:rej };
-    window.chrome.webview.postMessage({ type:'save', id:id, path:path, b64:bytesToB64(bytes) });
+    msg.id=id; window.chrome.webview.postMessage(msg);
   });
 }
+function hostWrite(path, bytes){ return hostCall({ type:'write', path:path, b64:bytesToB64(bytes) }); }
+function hostOpenPath(path){
+  var ex=docs.filter(function(d){ return d.hostPath && d.hostPath.toLowerCase()===path.toLowerCase(); })[0];
+  if(ex){ activate(ex); return Promise.resolve(); }
+  return hostCall({ type:'read', path:path }).then(function(r){
+    return openFromFile(new File([b64ToBytes(r.b64)], r.name), null, path, path);
+  }).catch(function(e){ toast('파일을 열 수 없어요: '+e.message, true); });
+}
+// 실행 파일에서는 폴더 목록도 윈도우가 직접 읽는다 (탐색기 트리가 브라우저 파일 접근 대신 이걸 쓴다)
+function baseName(p){ return p.replace(/[\\/]+$/,'').split(/[\\/]/).pop() || p; }
+function joinPath(a, b){ return a.replace(/[\\/]+$/,'')+'\\'+b; }
+function HostDir(path){ this.kind='directory'; this.host=true; this.path=path; this.name=baseName(path); }
+HostDir.prototype.values=async function*(){
+  var r=await hostCall({ type:'list', path:this.path });
+  for(var i=0;i<r.entries.length;i++){ var e=r.entries[i], p=joinPath(this.path, e.name); yield e.dir ? new HostDir(p) : new HostFile(p); }
+};
+function HostFile(path){ this.kind='file'; this.host=true; this.path=path; this.name=baseName(path); }
 function openHostFile(m){
   var ex=docs.filter(function(d){ return d.hostPath && d.hostPath.toLowerCase()===String(m.path).toLowerCase(); })[0];
   if(ex) return activate(ex);
@@ -2492,7 +2563,7 @@ function openHostFile(m){
 if(HOST) window.chrome.webview.addEventListener('message', function(e){
   var m=e.data; if(!m) return;
   if(m.type==='openFile') ready.then(function(){ openHostFile(m); });
-  else if(m.type==='saved'){ var w=hostWaits[m.id]; if(w){ delete hostWaits[m.id]; if(m.ok) w.res(); else w.rej(new Error(m.error||'저장하지 못했어요')); } }
+  else if(m.type==='reply'){ var w=hostWaits[m.id]; if(w){ delete hostWaits[m.id]; if(m.ok) w.res(m); else w.rej(new Error(m.error||'요청을 처리하지 못했어요')); } }
 });
 window.__webpadFlush=function(){ snapPending=true; snapshot().then(function(){ if(HOST) window.chrome.webview.postMessage({ type:'flushed' }); }); };
 
@@ -2504,6 +2575,7 @@ var ready=restore().catch(function(e){ console.error(e); return false; }).then(f
   if(!ok) newDoc();
   return idbGet('root').catch(function(){ return null; });
 }).then(function(h){
+  if(h && h.hostRoot){ h=HOST ? new HostDir(h.hostRoot) : null; }
   if(h){ root=h; expanded=new Set(['']); }
   renderTree();
   if(HOST) window.chrome.webview.postMessage({ type:'ready' });
@@ -2514,7 +2586,8 @@ if('launchQueue' in window) window.launchQueue.setConsumer(function(p){
   if(!p.files || !p.files.length) return;
   ready.then(function(){ p.files.forEach(function(h){ openHandle(h, h.name); }); });
 });
-window.__webpad={ docs:function(){ return docs; }, active:function(){ return active; }, lineText:lineText, render:render };
+window.__webpad={ docs:function(){ return docs; }, active:function(){ return active; }, lineText:lineText, render:render,
+  hostCall:HOST?hostCall:null, setHostRoot:function(p){ setRoot(new HostDir(p)); }, openPath:HOST?hostOpenPath:null };
 })();
 </script>
 </body>

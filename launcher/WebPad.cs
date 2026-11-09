@@ -12,6 +12,7 @@ using System.Drawing;
 using System.IO;
 using System.Reflection;
 using System.Runtime.CompilerServices;
+using System.Runtime.InteropServices;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Web.Script.Serialization;
@@ -192,6 +193,70 @@ static class Program
     }
 }
 
+// 윈도우 기본 "폴더 선택" 창 (탐색기와 같은 모양). .NET 4의 FolderBrowserDialog는 옛날 트리 모양이라 직접 부른다
+static class FolderPicker
+{
+    [ComImport, Guid("DC1C5A9C-E88A-4dde-A5A1-60F82A20AEF7")]
+    class FileOpenDialogCom { }
+
+    [ComImport, Guid("42f85136-db7e-439c-85f1-e4075d135fc8"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+    interface IFileOpenDialog
+    {
+        [PreserveSig] int Show(IntPtr parent);
+        void SetFileTypes(uint cFileTypes, IntPtr rgFilterSpec);
+        void SetFileTypeIndex(uint iFileType);
+        void GetFileTypeIndex(out uint piFileType);
+        void Advise(IntPtr pfde, out uint pdwCookie);
+        void Unadvise(uint dwCookie);
+        void SetOptions(uint fos);
+        void GetOptions(out uint pfos);
+        void SetDefaultFolder(IShellItem psi);
+        void SetFolder(IShellItem psi);
+        void GetFolder(out IShellItem ppsi);
+        void GetCurrentSelection(out IShellItem ppsi);
+        void SetFileName([MarshalAs(UnmanagedType.LPWStr)] string pszName);
+        void GetFileName([MarshalAs(UnmanagedType.LPWStr)] out string pszName);
+        void SetTitle([MarshalAs(UnmanagedType.LPWStr)] string pszTitle);
+        void SetOkButtonLabel([MarshalAs(UnmanagedType.LPWStr)] string pszText);
+        void SetFileNameLabel([MarshalAs(UnmanagedType.LPWStr)] string pszLabel);
+        void GetResult(out IShellItem ppsi);
+    }
+
+    [ComImport, Guid("43826D1E-E718-42EE-BC55-A1E261C37BFE"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+    interface IShellItem
+    {
+        void BindToHandler(IntPtr pbc, ref Guid bhid, ref Guid riid, out IntPtr ppv);
+        void GetParent(out IShellItem ppsi);
+        void GetDisplayName(uint sigdnName, [MarshalAs(UnmanagedType.LPWStr)] out string ppszName);
+    }
+
+    [DllImport("shell32.dll", CharSet = CharSet.Unicode, PreserveSig = false)]
+    static extern void SHCreateItemFromParsingName(string pszPath, IntPtr pbc, ref Guid riid, out IShellItem ppv);
+
+    public static string Pick(IntPtr owner, string start)
+    {
+        IFileOpenDialog dlg = (IFileOpenDialog)new FileOpenDialogCom();
+        try
+        {
+            dlg.SetOptions(0x20 | 0x40 | 0x800); // 폴더 고르기 | 실제 파일 시스템만 | 경로가 있어야 함
+            dlg.SetTitle("폴더 열기");
+            if (!string.IsNullOrEmpty(start) && Directory.Exists(start))
+            {
+                Guid iid = typeof(IShellItem).GUID;
+                IShellItem si;
+                try { SHCreateItemFromParsingName(start, IntPtr.Zero, ref iid, out si); dlg.SetFolder(si); } catch (Exception) { }
+            }
+            if (dlg.Show(owner) != 0) return null;
+            IShellItem result;
+            dlg.GetResult(out result);
+            string path;
+            result.GetDisplayName(0x80058000, out path); // SIGDN_FILESYSPATH
+            return path;
+        }
+        finally { Marshal.ReleaseComObject(dlg); }
+    }
+}
+
 class MainForm : Form
 {
     WebView2 web;
@@ -242,6 +307,7 @@ class MainForm : Form
         core.Settings.IsStatusBarEnabled = false;
         core.Settings.IsZoomControlEnabled = false;
         core.Settings.AreDevToolsEnabled = debug;
+        core.Settings.IsReputationCheckingRequired = false; // 주소 평판 확인(SmartScreen)으로 외부에 알리지 않는다
         core.SetVirtualHostNameToFolderMapping("webpad.local", Program.AppDir, CoreWebView2HostResourceAccessKind.Allow);
         core.DocumentTitleChanged += (s, e) => { Text = core.DocumentTitle; };
         core.NewWindowRequested += (s, e) => { e.Handled = true; try { Process.Start(e.Uri); } catch (Exception) { } };
@@ -260,24 +326,103 @@ class MainForm : Form
             if (pendingFile != null) { SendFile(pendingFile); pendingFile = null; }
             ProcessInbox();
         }
-        else if (type == "save")
-        {
-            Dictionary<string, object> reply = new Dictionary<string, object>();
-            reply["type"] = "saved";
-            reply["id"] = m["id"];
-            try
-            {
-                File.WriteAllBytes((string)m["path"], Convert.FromBase64String((string)m["b64"]));
-                reply["ok"] = true;
-            }
-            catch (Exception ex) { reply["ok"] = false; reply["error"] = ex.Message; }
-            web.CoreWebView2.PostWebMessageAsJson(json.Serialize(reply));
-        }
         else if (type == "flushed")
         {
             allowClose = true;
             Close();
         }
+        else if (m.ContainsKey("id"))
+        {
+            // 파일 다루기는 브라우저 대신 윈도우가 직접 한다 (브라우저는 C:\ 나 사용자 폴더 같은 곳을 막는다)
+            Dictionary<string, object> reply = new Dictionary<string, object>();
+            reply["type"] = "reply";
+            reply["id"] = m["id"];
+            try { HostCall(type, m, reply); reply["ok"] = true; }
+            catch (Exception ex) { reply["ok"] = false; reply["error"] = ex.Message; }
+            web.CoreWebView2.PostWebMessageAsJson(json.Serialize(reply));
+        }
+    }
+
+    static readonly HashSet<string> SkipDirs = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { ".git", "node_modules", "__pycache__", ".svn", "$RECYCLE.BIN", "System Volume Information" };
+
+    void HostCall(string type, Dictionary<string, object> m, Dictionary<string, object> reply)
+    {
+        string path = m.ContainsKey("path") ? m["path"] as string : null;
+        if (type == "write")
+        {
+            File.WriteAllBytes(path, Convert.FromBase64String((string)m["b64"]));
+        }
+        else if (type == "read")
+        {
+            reply["b64"] = Convert.ToBase64String(File.ReadAllBytes(path));
+            reply["name"] = Path.GetFileName(path);
+        }
+        else if (type == "list")
+        {
+            List<object> list = new List<object>();
+            DirectoryInfo di = new DirectoryInfo(path);
+            foreach (FileSystemInfo fi in di.EnumerateFileSystemInfos())
+            {
+                if ((fi.Attributes & FileAttributes.System) != 0 && (fi.Attributes & FileAttributes.Hidden) != 0) continue;
+                Dictionary<string, object> e = new Dictionary<string, object>();
+                e["name"] = fi.Name;
+                e["dir"] = (fi.Attributes & FileAttributes.Directory) != 0;
+                list.Add(e);
+            }
+            reply["entries"] = list;
+        }
+        else if (type == "search")
+        {
+            string q = ((string)m["q"]).ToLowerInvariant();
+            int max = Convert.ToInt32(m["max"]), scanned = 0;
+            List<object> found = new List<object>();
+            Stack<string> stack = new Stack<string>();
+            stack.Push(path);
+            while (stack.Count > 0 && found.Count < max && scanned < 200000)
+            {
+                string dir = stack.Pop();
+                IEnumerable<FileSystemInfo> items;
+                try { items = new DirectoryInfo(dir).EnumerateFileSystemInfos(); } catch (Exception) { continue; }
+                try
+                {
+                    foreach (FileSystemInfo fi in items)
+                    {
+                        scanned++;
+                        if ((fi.Attributes & FileAttributes.Directory) != 0) { if (!SkipDirs.Contains(fi.Name)) stack.Push(fi.FullName); continue; }
+                        if (fi.Name.ToLowerInvariant().Contains(q)) { found.Add(fi.FullName); if (found.Count >= max) break; }
+                    }
+                }
+                catch (Exception) { }
+            }
+            reply["paths"] = found;
+        }
+        else if (type == "pickFolder")
+        {
+            reply["path"] = FolderPicker.Pick(Handle, m.ContainsKey("start") ? m["start"] as string : null);
+        }
+        else if (type == "pickFiles")
+        {
+            using (OpenFileDialog dlg = new OpenFileDialog())
+            {
+                dlg.Multiselect = true;
+                dlg.Title = "파일 열기";
+                dlg.Filter = "모든 파일 (*.*)|*.*";
+                reply["paths"] = dlg.ShowDialog(this) == DialogResult.OK ? new List<string>(dlg.FileNames) : new List<string>();
+            }
+        }
+        else if (type == "pickSave")
+        {
+            using (SaveFileDialog dlg = new SaveFileDialog())
+            {
+                dlg.Title = "다른 이름으로 저장";
+                dlg.Filter = "모든 파일 (*.*)|*.*";
+                dlg.FileName = m.ContainsKey("name") ? m["name"] as string : "";
+                string dir = m.ContainsKey("dir") ? m["dir"] as string : null;
+                if (!string.IsNullOrEmpty(dir) && Directory.Exists(dir)) dlg.InitialDirectory = dir;
+                reply["path"] = dlg.ShowDialog(this) == DialogResult.OK ? dlg.FileName : null;
+            }
+        }
+        else throw new Exception("알 수 없는 요청: " + type);
     }
 
     void SendFile(string path)
