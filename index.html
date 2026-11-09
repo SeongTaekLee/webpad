@@ -85,6 +85,9 @@
   .side-head .title{ flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   .side-head .tb{ padding:2px 6px; font-size:12px; }
   #treeFilter{ margin:0 8px 6px; padding:5px 8px; border:1px solid var(--line); border-radius:6px; background:var(--bg); }
+  #treeOpts{ display:flex; gap:4px; margin:0 8px 6px; align-items:center; }
+  #treeOpts .tb{ padding:2px 6px; font-size:12px; flex:none; }
+  #treeExt{ flex:1; min-width:0; padding:3px 6px; border:1px solid var(--line); border-radius:6px; background:var(--bg); font-size:12px; }
   #tree{ flex:1; overflow:auto; padding-bottom:10px; font-size:13px; }
   .node{ display:flex; align-items:center; gap:4px; padding:2px 8px; white-space:nowrap; cursor:pointer; user-select:none; }
   .node:hover{ background:var(--panel2); }
@@ -383,6 +386,10 @@
         <button class="tb" data-cmd="collapseTree" title="모두 접기">⊟</button>
       </div>
       <input type="text" id="treeFilter" placeholder="파일 이름 검색" spellcheck="false" class="hidden">
+      <div id="treeOpts" class="hidden">
+        <button class="tb opt" id="treeTextOnly" title="엑셀·워드·PDF·그림·압축·exe처럼 웹패드로 열 수 없는 파일은 숨겨요">텍스트만</button>
+        <input type="text" id="treeExt" placeholder="확장자 (abap;txt)" spellcheck="false" title="보여줄 확장자. 세미콜론·쉼표·공백으로 구분 (예: abap;txt 또는 *.sql). 비우면 전부">
+      </div>
       <div id="tree"></div>
     </aside>
     <div id="resizer"></div>
@@ -546,7 +553,7 @@ var HL_LIMIT=4000;
 var PAD_TOP=4, PAD_LEFT=12;
 
 // ================= 설정 =================
-var settings={ theme:'', font:'nanum', fs:14, tab:4, spaces:false, autoSave:false, showHidden:false, showWs:false, trimSave:false, finalNl:false, side:250, sideOpen:true, keys:{} };
+var settings={ theme:'', font:'nanum', fs:14, tab:4, spaces:false, autoSave:false, showHidden:false, showWs:false, trimSave:false, finalNl:false, treeTextOnly:true, treeExt:'', side:250, sideOpen:true, keys:{} };
 try{ Object.assign(settings, JSON.parse(localStorage.getItem('webpad_settings')||'{}')); }catch(e){}
 function saveSettings(){ try{ localStorage.setItem('webpad_settings', JSON.stringify(settings)); }catch(e){} }
 var FONTS={ nanum:"'WebPadMono',Consolas,monospace", d2:"D2Coding,'D2Coding ligature','WebPadMono',monospace", consolas:"Consolas,'WebPadMono',monospace" };
@@ -2126,6 +2133,7 @@ var EXT_COLORS={ abap:'#2f7de1', sql:'#d97706', js:'#e0b400', ts:'#3178c6', json
 function renderTree(){
   var tree=$('tree'); tree.innerHTML='';
   $('treeFilter').classList.toggle('hidden', !root);
+  $('treeOpts').classList.toggle('hidden', !root);
   if(!root){
     $('rootName').textContent='탐색기';
     tree.innerHTML='<div class="side-empty">폴더를 열면 여기에 파일 목록이 보여요.<br>파일을 누르면 탭으로 열려요.<br><button class="btn" data-cmd="openFolder">폴더 열기</button></div>';
@@ -2154,10 +2162,24 @@ function makeNode(name, kind, depth, path){
   n.appendChild(car); n.appendChild(ico); n.appendChild(nm);
   return n;
 }
+// 탐색기 파일 필터: "텍스트만"(열 수 없는 형식 숨김) + 확장자 목록(abap;txt). 폴더는 항상 보여준다
+var treeExtRe=null, treeExtSrc=null;
+function treeShows(name){
+  if(settings.treeTextOnly && BIN_EXT.test(name)) return false;
+  var src=(settings.treeExt||'').trim();
+  if(!src) return true;
+  if(src!==treeExtSrc){
+    treeExtSrc=src;
+    var exts=src.split(/[;,\s]+/).map(function(s){ return s.replace(/^\*?\.?/, '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); }).filter(Boolean);
+    treeExtRe=exts.length ? new RegExp('\\.('+exts.join('|')+')$', 'i') : null;
+  }
+  return !treeExtRe || treeExtRe.test(name);
+}
 function renderDir(dh, path, depth, container){
   return listDir(dh).then(function(entries){
     var frag=document.createDocumentFragment(), subs=[];
     entries.forEach(function(h){
+      if(h.kind!=='directory' && !treeShows(h.name)) return;
       var p=path?path+'/'+h.name:h.name, node=makeNode(h.name, h.kind, depth, p);
       frag.appendChild(node);
       if(h.kind==='directory'){
@@ -2185,7 +2207,7 @@ function renderSearch(q){
       scanned++;
       var p=path?path+'/'+h.name:h.name;
       if(h.kind==='directory'){ if(!SKIP_DIRS[h.name]) await walk(h, p); continue; }
-      if(h.name.toLowerCase().indexOf(ql)<0) continue;
+      if(h.name.toLowerCase().indexOf(ql)<0 || !treeShows(h.name)) continue;
       found++;
       (function(h, p, dir){
         var n=makeNode(h.name, 'file', 0, p);
@@ -2208,9 +2230,10 @@ function renderHostSearch(q){
   return hostCall({ type:'search', path:root.path, q:q, max:300, hidden:settings.showHidden }).then(function(r){
     if(token!==searchToken) return;
     tree.innerHTML='';
-    if(!r.paths.length){ tree.innerHTML='<div class="side-empty">"'+esc(q)+'" 이름의 파일이 없어요</div>'; return; }
+    var paths=r.paths.filter(function(p){ return treeShows(baseName(p)); });
+    if(!paths.length){ tree.innerHTML='<div class="side-empty">"'+esc(q)+'" 이름의 파일이 없어요</div>'; return; }
     var base=root.path.replace(/[\\/]+$/,'').length+1;
-    r.paths.forEach(function(p){
+    paths.forEach(function(p){
       var rel=p.slice(base).replace(/\\/g,'/'), dir=rel.replace(/\/?[^/]*$/,'');
       var n=makeNode(baseName(p), 'file', 0, rel);
       var sub=document.createElement('span'); sub.className='sub'; sub.textContent=dir; n.appendChild(sub);
@@ -2231,6 +2254,11 @@ function highlightTreeActive(){
 var filterTimer=0;
 $('treeFilter').addEventListener('input', function(){ clearTimeout(filterTimer); filterTimer=setTimeout(renderTree, 250); });
 $('treeFilter').addEventListener('keydown', function(e){ if(e.key==='Escape'){ this.value=''; renderTree(); } });
+$('treeTextOnly').classList.toggle('on', settings.treeTextOnly);
+$('treeTextOnly').addEventListener('click', function(){ settings.treeTextOnly=!settings.treeTextOnly; this.classList.toggle('on', settings.treeTextOnly); saveSettings(); if(root) renderTree(); });
+$('treeExt').value=settings.treeExt||'';
+$('treeExt').addEventListener('input', function(){ settings.treeExt=this.value; saveSettings(); clearTimeout(filterTimer); filterTimer=setTimeout(renderTree, 250); });
+$('treeExt').addEventListener('keydown', function(e){ if(e.key==='Escape'){ this.value=''; settings.treeExt=''; saveSettings(); renderTree(); } });
 $('resizer').addEventListener('mousedown', function(e){
   e.preventDefault();
   var move=function(ev){ settings.side=Math.max(150, Math.min(600, ev.clientX)); document.documentElement.style.setProperty('--side', settings.side+'px'); };
@@ -2950,7 +2978,7 @@ function globToRe(filter){
   var parts=filter.split(/[;,\s]+/).filter(Boolean); if(!parts.length) return null;
   return new RegExp('^(?:'+parts.map(function(g){ return escRe(g).replace(/\\\*/g,'.*').replace(/\\\?/g,'.'); }).join('|')+')$', 'i');
 }
-var BIN_EXT=/\.(exe|dll|bin|obj|pdb|png|jpe?g|gif|bmp|ico|webp|zip|7z|rar|gz|tar|pdf|docx?|xlsx?|pptx?|mp3|mp4|avi|mov|wav|ttf|otf|woff2?|class|jar|pyc|so|dylib|iso|msi|dat)$/i;
+var BIN_EXT=/\.(exe|dll|bin|obj|pdb|png|jpe?g|gif|bmp|ico|webp|tiff?|psd|zip|7z|rar|gz|tar|cab|pdf|docx?|xls[xmb]?|ppt[xm]?|hwpx?|odt|ods|odp|mdb|accdb|msg|mp3|mp4|avi|mov|mkv|wmv|wav|flac|ttf|otf|woff2?|class|jar|pyc|so|dylib|iso|msi|dat|db|sqlite|lnk|chm)$/i;
 function isBinary(buf){ var b=new Uint8Array(buf, 0, Math.min(buf.byteLength, 8000)); for(var i=0;i<b.length;i++) if(b[i]===0) return true; return false; }
 function runFindInFiles(){
   var q=$('fifInput').value; if(!q) return;

@@ -20,7 +20,7 @@ Notepad++를 쓸 수 없는 보안 환경을 위한 가벼운 코드 편집기�
 
 ## 기능
 
-- 탭 여러 개, 폴더 탐색기(파일 이름 검색), 끌어다 놓아 열기
+- 탭 여러 개, 폴더 탐색기(파일 이름 검색, "텍스트만" 필터로 엑셀·PDF·그림처럼 열 수 없는 파일 숨기기, 확장자 필터), 끌어다 놓아 열기
 - 문법 색칠: ABAP, SQL, JavaScript/TS, Java/C 계열, Python, JSON, HTML/XML, CSS, Markdown, CSV(열마다 색), INI, YAML, Shell/Batch, 로그
   - Notepad++ 사용자 정의 언어(XML)를 불러올 수 있어요 (설정 → 사용자 언어 불러오기)
 - 줄 복제, 삭제, 이동, 추가, 주석 켜기/끄기, 대소문자 변환, 짝 괄호 이동(ABAP은 IF/LOOP/FORM/METHOD 줄에서 짝 END로)
