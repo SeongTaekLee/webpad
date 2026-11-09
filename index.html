@@ -385,7 +385,7 @@
   <div id="statusbar">
     <span class="si path" id="stPath">새 문서</span>
     <span class="si hidden" id="stMode">블록 편집</span>
-    <span class="si hidden" id="stBig" title="줄이 많아서 보이는 곳 근처만 편집기에 올려 가볍게 다루고 있어요. 화면을 멀리 옮기면 실행 취소 기록이 초기화돼요.">대용량 모드</span>
+    <span class="si hidden" id="stBig" title="줄이 아주 많아서 보이는 곳 근처만 편집기에 올려 가볍게 다루고 있어요.">대용량 모드</span>
     <span class="si" id="stPos">줄 1, 칸 1</span>
     <span class="si hidden" id="stSel"></span>
     <span class="si" id="stSize">1줄 · 0자</span>
@@ -874,10 +874,12 @@ function syncText(d, type){
       var w=Math.max(off, start-32);
       if(oldLocal.slice(w-off,start-off)===local.slice(w-off,start-off) && oldLocal.slice(oldEnd-off, oldEnd-off+32)===local.slice(newEnd-off, newEnd-off+32)){
         L1=lineOf(d.ls, oldEnd);
+        recordEdit(d, start, ot.slice(start, oldEnd), nt.slice(start, newEnd), [pre.s, pre.e], type); var recd=true;
         L0=patchLines(d, local, off, nt.length, start, oldEnd, delta);
       }
     }
   }
+  if(L0<0 && !recd && ot!=null) recordDiff(d, ot, nt, pre ? [pre.s, pre.e] : null, type);
   d.text=nt; d.local=local;
   if(L0<0){ d.ls=buildLs(nt); d.states=[null]; d.stDirty=0; d.stEnd=0; }
   else{
@@ -902,7 +904,7 @@ function makeDoc(o){
   var d={ id:o.id||('d'+Date.now().toString(36)+(seq++)), name:o.name, path:o.path||'', lang:o.lang||langForName(o.name),
     handle:o.handle||null, eol:o.eol||'\r\n', enc:o.enc||'utf-8', savedText:o.savedText!==undefined?o.savedText:'',
     states:[null], stDirty:0, stEnd:0, delim:o.delim||null, grid:false, snapDirty:true, untitled:!!o.untitled, col:null, pre:null,
-    big:false, off:0, w0:0, w1:1, head:'', tail:'', gsel:null, hostPath:o.hostPath||null };
+    big:false, off:0, w0:0, w1:1, head:'', tail:'', gsel:null, hostPath:o.hostPath||null, undo:[], redo:[], undoBytes:0, undoSeal:true, composing:false };
   var ta=document.createElement('textarea');
   ta.className='ed'; ta.spellcheck=false; ta.setAttribute('wrap','off');
   ta.setAttribute('autocomplete','off'); ta.setAttribute('autocorrect','off'); ta.setAttribute('autocapitalize','off');
@@ -911,6 +913,7 @@ function makeDoc(o){
   if(d.big) setWindow(d, 0, WIN_LINES); else { ta.value=d.text; d.local=d.text; d.w1=d.ls.length; }
   if(d.lang==='csv' && !d.delim) d.delim=detectDelim(d.text, d.name);
   ta.addEventListener('beforeinput', function(e){
+    if(e.inputType==='historyUndo' || e.inputType==='historyRedo'){ e.preventDefault(); undoCmd(d, e.inputType==='historyRedo'); return; }
     // 블록 편집 중에는 키보드 외 경로(입력기 확정, 화면 키보드 등)로 들어온 글자도 모든 줄에 넣는다
     if(d.col && !d.colBusy && e.inputType==='insertText' && e.data){ e.preventDefault(); colType(d, e.data); return; }
     if(d.vsel && e.inputType==='insertText' && e.data){ e.preventDefault(); replaceRange(d, d.vsel.s, d.vsel.e, e.data); return; }
@@ -931,7 +934,9 @@ function makeDoc(o){
     if(d.col){ e.preventDefault(); e.clipboardData.setData('text/plain', colText(d)); colDelete(d, false, true); }
     else if(d.vsel){ e.preventDefault(); e.clipboardData.setData('text/plain', crlf(d.text.slice(d.vsel.s, d.vsel.e))); replaceRange(d, d.vsel.s, d.vsel.e, ''); }
   });
-  ta.addEventListener('compositionstart', function(){ if(d.vsel) replaceRange(d, d.vsel.s, d.vsel.e, ''); });
+  ta.addEventListener('compositionstart', function(){ if(d.vsel) replaceRange(d, d.vsel.s, d.vsel.e, ''); d.composing=true; });
+  ta.addEventListener('compositionend', function(){ d.composing=false; });
+  ta.addEventListener('mousedown', function(){ d.undoSeal=true; });
   ta.addEventListener('paste', function(e){
     if(d.col){ e.preventDefault(); colPaste(d, e.clipboardData.getData('text/plain')); return; }
     // 아주 큰 붙여넣기는 브라우저 입력칸을 거치지 않고 바로 넣는다 (대신 실행 취소 기록은 남지 않음)
@@ -952,10 +957,11 @@ function makeDoc(o){
 }
 function setValue(d, text){
   var cl=lineOf(d.ls, sA(d));
+  recordDiff(d, d.text, text, [sA(d), sB(d)], 'replace'); d.undoSeal=true;
   d.text=text; d.ls=buildLs(text); d.states=[null]; d.stDirty=0; d.stEnd=0; d.pre=null; d.gsel=null; d.vsel=null;
   d.big=d.ls.length>BIG_LINES;
   cl=Math.min(cl, d.ls.length-1);
-  if(d.big) setWindow(d, cl-(WIN_LINES>>1), cl+(WIN_LINES>>1));
+  if(d.big) placeAt(d, cl);
   else setWindow(d, 0, d.ls.length);
   afterChange(d);
 }
@@ -1013,7 +1019,7 @@ function activate(d, noFocus){
   d.ta.classList.add('active');
   $('stLang').value=d.lang;
   $('stEnc').value=d.enc;
-  $('stBig').classList.toggle('hidden', !d.big);
+  $('stBig').classList.toggle('hidden', !(d.big && d.ls.length>HUGE_LINES));
   setGridVisible(d.grid);
   renderTabs(); updateGutterWidth(); requestRender(); updateStatus(); highlightTreeActive();
   updateTitle(); updateLangUi();
@@ -1139,20 +1145,24 @@ function edit(d, s, e, text, selS, selE){
   d.gsel=null;
   ta.focus();
   ta.setSelectionRange(s-d.off, e-d.off);
-  d.pre={ s:s, e:e };
+  d.pre={ s:s, e:e }; d.undoSeal=true;
   var ok=text==='' ? document.execCommand('delete') : document.execCommand('insertText', false, text);
   if(!ok){ ta.setRangeText(text, s-d.off, e-d.off, 'end'); onInput(d, null); }
+  d.undoSeal=true;
   if(selS!=null) setSel(d, selS, selE==null?selS:selE);
 }
 
 // ================= 대용량 모드 =================
 // 줄이 아주 많으면 브라우저 입력칸이 느려지므로, 문서 전체는 메모리에 두고
 // 입력칸에는 지금 보는 곳 근처 WIN_LINES 줄만 올린다. 위아래 여백(padding)으로 전체 높이를 흉내 낸다.
-var BIG_LINES=15000, WIN_LINES=6000, WIN_MARGIN=600;
+// 브라우저 입력칸은 한글 조합 중 커서 앞 줄 수에 비례해 느려진다 (4천 줄 뒤에서 한 글자에 0.4초).
+// 그래서 줄이 조금만 많아도 커서 근처 구간만 올리고, 커서는 구간 위쪽 CARET_MAX 줄 안에 둔다.
+var BIG_LINES=600, WIN_LINES=1500, CARET_TOP=150, CARET_MAX=350, SEL_MAX=8000, HUGE_LINES=15000;
+function placeAt(d, la, lb){ var w0=Math.max(0, la-CARET_TOP); setWindow(d, w0, Math.max(w0+WIN_LINES, (lb==null?la:lb)+200)); }
 // vsel: 구간보다 큰 가상 선택(전체 선택 등), gsel: 구간 밖으로 스크롤했을 때 기억해 둔 커서
 function sA(d){ return d.vsel ? d.vsel.s : d.gsel ? d.gsel.s : d.off+d.ta.selectionStart; }
 function sB(d){ return d.vsel ? d.vsel.e : d.gsel ? d.gsel.e : d.off+d.ta.selectionEnd; }
-function tooWide(d, s, e){ return d.big && lineOf(d.ls, Math.max(s,e))-lineOf(d.ls, Math.min(s,e))>WIN_LINES-1000; }
+function tooWide(d, s, e){ return d.big && lineOf(d.ls, Math.max(s,e))-lineOf(d.ls, Math.min(s,e))>SEL_MAX; }
 function setSel(d, s, e){
   if(e==null) e=s;
   if(tooWide(d, s, e)){ d.vsel={ s:Math.min(s,e), e:Math.max(s,e) }; d.gsel=null; d.ta.classList.add('away'); requestRender(); return; }
@@ -1160,6 +1170,63 @@ function setSel(d, s, e){
   ensureWindow(d, lineOf(d.ls, Math.min(s,e)), lineOf(d.ls, Math.max(s,e)), 2);
   d.gsel=null; d.ta.classList.remove('away');
   d.ta.setSelectionRange(s-d.off, e-d.off);
+}
+// ================= 실행 취소 =================
+var UNDO_MAX=3000, UNDO_BYTES=64e6;
+var TYPING_RE=/^(insertText|insertCompositionText|insertFromComposition|deleteContentBackward|deleteContentForward|deleteByComposition|deleteCompositionText)$/;
+function recordDiff(d, ot, nt, selB, type){
+  if(d.undoing || ot===nt) return;
+  var n=Math.min(ot.length, nt.length), p=0, q=0;
+  while(p<n && ot.charCodeAt(p)===nt.charCodeAt(p)) p++;
+  while(q<n-p && ot.charCodeAt(ot.length-1-q)===nt.charCodeAt(nt.length-1-q)) q++;
+  recordEdit(d, p, ot.slice(p, ot.length-q), nt.slice(p, nt.length-q), selB, type);
+}
+function recordEdit(d, s, del, ins, selB, type){
+  if(d.undoing) return;
+  var n=Math.min(del.length, ins.length), p=0, q=0;
+  while(p<n && del.charCodeAt(p)===ins.charCodeAt(p)) p++;
+  while(q<n-p && del.charCodeAt(del.length-1-q)===ins.charCodeAt(ins.length-1-q)) q++;
+  s+=p; del=del.slice(p, del.length-q); ins=ins.slice(p, ins.length-q);
+  if(!del && !ins) return;
+  d.redo.length=0;
+  var now=Date.now(), u=d.undo, last=u[u.length-1], typing=TYPING_RE.test(type||'');
+  // 이어서 치는 글자(한글 조합 포함)와 지우기는 한 단계로 묶는다
+  if(last && typing && last.typing && !d.undoSeal && now-last.t<3000 && ins.indexOf('\n')<0){
+    var le=last.s+last.ins.length;
+    if(s>=last.s && s+del.length<=le){
+      last.ins=last.ins.slice(0, s-last.s)+ins+last.ins.slice(s-last.s+del.length); last.t=now;
+      if(!last.ins && !last.del) u.pop();
+      return;
+    }
+    if(!ins && !last.ins && s+del.length===last.s){ last.s=s; last.del=del+last.del; last.t=now; return; }
+  }
+  u.push({ s:s, del:del, ins:ins, selB:selB, t:now, typing:typing });
+  d.undoSeal=false;
+  d.undoBytes+=del.length+ins.length;
+  while(u.length>1 && (u.length>UNDO_MAX || d.undoBytes>UNDO_BYTES)){ var o=u.shift(); d.undoBytes-=o.del.length+o.ins.length; }
+}
+function undoCmd(d, redo){
+  if(!d) return;
+  if(d.grid){ toast('CSV 표 편집 중에는 표를 닫은 뒤 실행 취소하세요'); return; }
+  var from=redo?d.redo:d.undo, to=redo?d.undo:d.redo, r=from.pop();
+  if(!r) return;
+  var cur=redo?r.del:r.ins, put=redo?r.ins:r.del;
+  if(d.text.substr(r.s, cur.length)!==cur){ d.undo.length=0; d.redo.length=0; toast('실행 취소 기록이 문서와 맞지 않아 비웠어요', true); return; }
+  if(d.col) exitCol(d);
+  d.undoing=true;
+  try{
+    var s=r.s, e=r.s+cur.length;
+    if(tooWide(d, s, e) || put.length>300000) setValue(d, d.text.slice(0,s)+put+d.text.slice(e));
+    else{
+      d.vsel=null; ensureWindow(d, lineOf(d.ls,s), lineOf(d.ls,e), 2); d.gsel=null;
+      d.pre={ s:s, e:e };
+      d.ta.setRangeText(put, s-d.off, e-d.off, 'end');
+      onInput(d, 'undo');
+    }
+  } finally{ d.undoing=false; }
+  to.push(r); d.undoSeal=true;
+  var sel=redo ? [r.s+r.ins.length, r.s+r.ins.length] : (r.selB || [r.s, r.s+r.del.length]);
+  setSel(d, sel[0], sel[1]); revealPos(d, sel[1]); requestRender(); updateStatus();
 }
 function replaceRange(d, s, e, t){
   setValue(d, d.text.slice(0,s)+t+d.text.slice(e));
@@ -1213,19 +1280,21 @@ function applyScrollMode(d){
   if(d.big) sizeBig(d, false); else { $('spacer').style.height='0'; $('spacer').style.width='1px'; }
 }
 function ensureWindow(d, la, lb, margin){
-  if(!d.big) return;
+  if(!d.big || d.composing) return;
   var N=d.ls.length;
-  var okTop=la>=d.w0 && (la>=d.w0+margin || d.w0===0), okBot=lb<d.w1 && (lb<d.w1-margin || d.w1===N);
+  var okTop=la>=d.w0 && (la>=d.w0+margin || d.w0===0) && la-d.w0<=CARET_MAX, okBot=lb<d.w1 && (lb<d.w1-margin || d.w1===N);
   if(okTop && okBot) return;
-  if(lb-la>WIN_LINES-1000) lb=la;
-  var mid=(la+lb)>>1;
-  setWindow(d, mid-(WIN_LINES>>1), mid+(WIN_LINES>>1));
+  if(lb-la>SEL_MAX) lb=la;
+  placeAt(d, la, lb);
 }
+// 화면을 옮기면 보이는 곳이 구간 위쪽에 오도록 다시 올린다 (거기를 누르고 바로 한글을 쳐도 빠르게)
 function scrollWindow(d, st, H){
-  var fv=Math.floor(st/LH), lv=Math.ceil((st+H)/LH), N=d.ls.length;
-  if((fv<d.w0+WIN_MARGIN && d.w0>0) || (lv>d.w1-WIN_MARGIN && d.w1<N)){
-    var mid=(fv+lv)>>1;
-    setWindow(d, mid-(WIN_LINES>>1), mid+(WIN_LINES>>1));
+  if(d.composing) return;
+  var fv=Math.floor(st/LH), lv=Math.ceil((st+H)/LH), N=d.ls.length, want=Math.max(0, fv-CARET_TOP);
+  if((d.w0>0 && fv<d.w0+40) || (lv>d.w0+CARET_MAX && want>d.w0) || (lv>d.w1-40 && d.w1<N)){
+    // 길게 잡은 선택이 구간 안에 있으면 그대로 둔다 (선택을 끊지 않게)
+    if(d.w1-d.w0>WIN_LINES+100 && fv>=d.w0 && lv<=d.w1 && sB(d)-sA(d)>0) return;
+    setWindow(d, want, want+WIN_LINES);
   }
 }
 function updateBigMode(d){
@@ -1234,14 +1303,14 @@ function updateBigMode(d){
     st=d.ta.scrollTop;
     d.big=true; var cl=lineOf(d.ls, sA(d));
     if(d===active) applyScrollMode(d);
-    setWindow(d, cl-(WIN_LINES>>1), cl+(WIN_LINES>>1));
+    placeAt(d, cl, lineOf(d.ls, sB(d)));
     if(d===active) codeWrap.scrollTop=st;
   }else if(d.big && N<BIG_LINES/2){
     st=codeWrap.scrollTop;
     d.big=false; setWindow(d, 0, N);
     if(d===active){ applyScrollMode(d); codeWrap.scrollTop=0; d.ta.scrollTop=st; }
   }else if(d.big) sizeBigHeight(d);
-  if(d===active) $('stBig').classList.toggle('hidden', !d.big);
+  if(d===active) $('stBig').classList.toggle('hidden', !(d.big && N>HUGE_LINES));
 }
 // 대용량 모드에서 커서가 구간 끝에 가까우면 미리 옮겨 둔다 (키 입력 직전)
 function bigKey(e, d){
@@ -1267,7 +1336,7 @@ function bigKey(e, d){
     if(e.shiftKey) setSel(d, Math.min(anchor,np), Math.max(anchor,np)); else setSel(d, np);
     requestRender(); updateStatus(); return true;
   }
-  ensureWindow(d, lineOf(d.ls, sA(d)), lineOf(d.ls, sB(d)), 80);
+  if(k!=='Process' && !e.isComposing) ensureWindow(d, lineOf(d.ls, sA(d)), lineOf(d.ls, sB(d)), 80);
 }
 codeWrap.addEventListener('scroll', function(){ if(active && active.big) requestRender(); });
 // 큰 문서는 실행 취소 기록 없이 바로 바꾼다 (브라우저 실행 취소가 매우 느려짐)
@@ -1488,6 +1557,8 @@ function colCompEnd(d, data){
 
 function onEditorKey(e, d){
   var k=e.key, ctrl=e.ctrlKey||e.metaKey, sh=e.shiftKey, alt=e.altKey;
+  if(ctrl && !alt && !e.isComposing && (e.code==='KeyZ' || e.code==='KeyY')){ e.preventDefault(); undoCmd(d, e.code==='KeyY' || sh); return; }
+  if(!e.isComposing && /^(Arrow|Home|End|Page)/.test(k)) d.undoSeal=true;
   if(d.big && bigKey(e, d)) return;
   if(alt && sh && !ctrl && /^Arrow/.test(k)){ e.preventDefault(); colExtend(d, k); return; }
   if(d.col){
@@ -2634,7 +2705,7 @@ if('launchQueue' in window) window.launchQueue.setConsumer(function(p){
   if(!p.files || !p.files.length) return;
   ready.then(function(){ p.files.forEach(function(h){ openHandle(h, h.name); }); });
 });
-window.__webpad={ docs:function(){ return docs; }, active:function(){ return active; }, lineText:lineText, render:render,
+window.__webpad={ docs:function(){ return docs; }, active:function(){ return active; }, lineText:lineText, render:render, setSel:setSel, undo:undoCmd, edit:edit,
   hostCall:HOST?hostCall:null, setHostRoot:function(p){ setRoot(new HostDir(p)); }, openPath:HOST?hostOpenPath:null };
 })();
 </script>
