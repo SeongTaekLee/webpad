@@ -24,8 +24,8 @@ using Microsoft.Web.WebView2.WinForms;
 [assembly: AssemblyTitle("WebPad")]
 [assembly: AssemblyProduct("WebPad")]
 [assembly: AssemblyDescription("웹패드 - 가벼운 코드 편집기")]
-[assembly: AssemblyVersion("1.2.2.0")]
-[assembly: AssemblyFileVersion("1.2.2.0")]
+[assembly: AssemblyVersion("1.2.3.0")]
+[assembly: AssemblyFileVersion("1.2.3.0")]
 
 static class Program
 {
@@ -337,10 +337,30 @@ class MainForm : Form
             Dictionary<string, object> reply = new Dictionary<string, object>();
             reply["type"] = "reply";
             reply["id"] = m["id"];
-            try { HostCall(type, m, reply); reply["ok"] = true; }
+            try
+            {
+                if (type == "dropPaths") DropPaths(e, reply); else HostCall(type, m, reply);
+                reply["ok"] = true;
+            }
             catch (Exception ex) { reply["ok"] = false; reply["error"] = ex.Message; }
             web.CoreWebView2.PostWebMessageAsJson(json.Serialize(reply));
         }
+    }
+
+    // 끌어다 놓은 파일: 브라우저는 이름만 알려주므로 함께 넘어온 파일 객체에서 전체 경로를 꺼낸다
+    static void DropPaths(CoreWebView2WebMessageReceivedEventArgs e, Dictionary<string, object> reply)
+    {
+        List<string> files = new List<string>(), dirs = new List<string>();
+        var objs = e.AdditionalObjects;
+        if (objs != null)
+            foreach (object o in objs)
+            {
+                CoreWebView2File f = o as CoreWebView2File;
+                if (f == null || string.IsNullOrEmpty(f.Path)) continue;
+                if (Directory.Exists(f.Path)) dirs.Add(f.Path); else files.Add(f.Path);
+            }
+        reply["files"] = files;
+        reply["dirs"] = dirs;
     }
 
     static readonly HashSet<string> SkipDirs = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { ".git", "node_modules", "__pycache__", ".svn", "$RECYCLE.BIN", "System Volume Information" };

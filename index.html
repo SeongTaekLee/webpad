@@ -14,9 +14,9 @@
 </script>
 <style>
   @font-face{ font-family:'WebPadMono'; font-weight:400; font-display:swap;
-    src:local('NanumGothicCoding'), url('fonts/NanumGothicCoding-R.woff2') format('woff2'); }
+    src:url('fonts/NanumGothicCoding-R.woff2') format('woff2'); }
   @font-face{ font-family:'WebPadMono'; font-weight:600 800; font-display:swap;
-    src:local('NanumGothicCoding-Bold'), url('fonts/NanumGothicCoding-B.woff2') format('woff2'); }
+    src:url('fonts/NanumGothicCoding-B.woff2') format('woff2'); }
   :root{
     --bg:#ffffff; --panel:#f6f7f9; --panel2:#eceef2; --line:#dcdfe5; --ink:#1f2328; --muted:#6b7280;
     --accent:#2563eb; --accent-soft:#dbe7ff; --curline:#f3f6fb; --sel:rgba(37,99,235,.22);
@@ -1838,6 +1838,18 @@ window.addEventListener('drop', function(e){
   if(e.dataTransfer.types.indexOf('Files')<0) return;
   e.preventDefault(); dragDepth=0; $('dropHint').classList.remove('show');
   var items=Array.prototype.slice.call(e.dataTransfer.items);
+  // exe: 파일 객체를 윈도우 쪽에 넘겨 전체 경로로 연다 (제목 표시줄·저장 위치가 정확해진다)
+  if(HOST && window.chrome.webview.postMessageWithAdditionalObjects && e.dataTransfer.files.length){
+    var files=e.dataTransfer.files;
+    new Promise(function(res, rej){
+      var id=++hostSeq; hostWaits[id]={ res:res, rej:rej };
+      window.chrome.webview.postMessageWithAdditionalObjects({ type:'dropPaths', id:id }, files);
+    }).then(function(r){
+      r.dirs.forEach(function(p){ setRoot(new HostDir(p)); });
+      return r.files.reduce(function(p, path){ return p.then(function(){ return hostOpenPath(path); }); }, Promise.resolve());
+    }).catch(function(err){ toast(err.message, true); });
+    return;
+  }
   if(items.length && items[0].getAsFileSystemHandle){
     Promise.all(items.map(function(it){ return it.getAsFileSystemHandle(); })).then(function(hs){
       hs.forEach(function(h){ if(!h) return; if(h.kind==='file') openHandle(h, h.name); else setRoot(h); });
