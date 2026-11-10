@@ -50,7 +50,7 @@
   html,body{ margin:0; height:100%; background:var(--bg); color:var(--ink);
     font:13px 'Malgun Gothic','Apple SD Gothic Neo',-apple-system,sans-serif; overflow:hidden; }
   button,input,select{ font:inherit; color:inherit; }
-  #app{ display:flex; flex-direction:column; height:100vh; }
+  #app{ display:flex; flex-direction:column; height:100vh; height:100dvh; }
 
   #toolbar{ display:flex; align-items:center; gap:2px; padding:4px 8px; background:var(--panel); border-bottom:1px solid var(--line); flex:none; flex-wrap:wrap; }
   .brand{ font-weight:800; margin-right:10px; letter-spacing:-.3px; }
@@ -78,6 +78,9 @@
   .menu .row .step{ display:flex; align-items:center; gap:6px; }
   .menu .row .step button{ width:26px; padding:2px 0; justify-content:center; border:1px solid var(--line); }
   .menu label.row{ cursor:pointer; }
+  .menu button:disabled{ opacity:.4; cursor:default; background:none; }
+  .menu.ctx{ position:fixed; top:0; left:0; max-height:calc(100vh - 12px); overflow-y:auto; min-width:220px; z-index:60; }
+  .menu.ctx .cap{ padding:5px 10px 2px; color:var(--muted); font-size:11px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:320px; }
 
   #main{ flex:1; display:flex; min-height:0; }
   #sidebar{ width:var(--side); flex:none; display:flex; flex-direction:column; background:var(--panel); border-right:1px solid var(--line); min-width:0; }
@@ -279,6 +282,7 @@
     <div class="menu-wrap">
       <button class="tb" data-menu="menuEdit">편집 ▾</button>
       <div class="menu" id="menuEdit">
+        <div class="row" style="color:var(--muted);font-size:12px;padding-top:2px;padding-bottom:2px">공백·대소문자·정렬은 선택한 부분(블록 포함)에만, 선택이 없으면 문서 전체에</div>
         <button data-cmd="dupLine">줄 복제 <kbd data-key="dupLine"></kbd></button>
         <button data-cmd="delLine">줄 삭제 <kbd data-key="delLine"></kbd></button>
         <button data-cmd="lineBelow">아래에 줄 추가 <kbd data-key="lineBelow"></kbd></button>
@@ -492,6 +496,9 @@
     <span class="si" id="snapState">임시 저장 대기</span>
   </div>
 </div>
+
+<div class="menu ctx" id="ctxTab"></div>
+<div class="menu ctx" id="ctxEdit"></div>
 
 <div class="modal-bg hidden" id="gotoModal"><div class="modal">
   <h3>줄로 이동</h3>
@@ -1051,6 +1058,7 @@ function makeDoc(o){
   ta.addEventListener('blur', function(){ setTimeout(function(){ if(ac.open && document.activeElement!==ta) acClose(); }, 120); });
   ta.addEventListener('keydown', function(e){ onEditorKey(e, d); });
   ta.addEventListener('mousedown', function(e){ onEditorMouse(e, d); });
+  ta.addEventListener('contextmenu', function(e){ e.preventDefault(); e.stopPropagation(); openEditCtx(e, d); });
   var crlf=function(t){ return t.replace(/\n/g, '\r\n'); };
   ta.addEventListener('copy', function(e){
     if(d.col){ e.preventDefault(); e.clipboardData.setData('text/plain', colText(d)); }
@@ -1107,6 +1115,7 @@ function renderTabs(){
     t.appendChild(nm); t.appendChild(x);
     t.addEventListener('mousedown', function(e){ if(e.button===1){ e.preventDefault(); closeDoc(d); } });
     t.addEventListener('click', function(){ activate(d); });
+    t.addEventListener('contextmenu', function(e){ e.preventDefault(); e.stopPropagation(); openTabCtx(e, d); });
     t.addEventListener('dragstart', function(e){ e.dataTransfer.setData('text/x-webpad-tab', String(idx)); e.dataTransfer.effectAllowed='move'; });
     t.addEventListener('dragover', function(e){ if(e.dataTransfer.types.indexOf('text/x-webpad-tab')>=0){ e.preventDefault(); t.classList.add('drag-over'); } });
     t.addEventListener('dragleave', function(){ t.classList.remove('drag-over'); });
@@ -1158,6 +1167,24 @@ function newDoc(text, name){
   untitledN++;
   var d=makeDoc({ name:name||('새 문서 '+untitledN), text:text||'', untitled:true, savedText:'' });
   activate(d); return d;
+}
+// 여러 탭을 한 번에 닫는다. 저장 안 된 탭은 한 번만 묻는다. keep: 닫은 뒤 보여줄 탭
+function closeDocs(list, keep){
+  list=list.filter(function(d){ return docs.indexOf(d)>=0; });
+  if(!list.length) return toast('닫을 탭이 없어요');
+  var dirty=list.filter(function(d){ return isDirty(d) && d.text!==''; });
+  if(dirty.length){
+    var names=dirty.slice(0,3).map(function(d){ return d.name; }).join(', ')+(dirty.length>3?' 외 '+(dirty.length-3)+'개':'');
+    if(!confirm('저장하지 않은 탭이 '+dirty.length+'개 있어요 ('+names+').\n저장하지 않고 닫을까요?')) return;
+  }
+  if(cmp && (list.indexOf(cmp.a)>=0 || list.indexOf(cmp.b)>=0)) closeCompare();
+  var wasActive=list.indexOf(active)>=0, i=docs.indexOf(active);
+  list.forEach(function(d){ rememberClosed(d); docs.splice(docs.indexOf(d),1); d.ta.remove(); idbDel('text:'+d.id).catch(function(){}); });
+  if(!docs.length){ active=null; newDoc(); }
+  else if(wasActive){ active=null; activate(keep && docs.indexOf(keep)>=0 ? keep : docs[Math.max(0, Math.min(i, docs.length-1))]); }
+  else renderTabs();
+  scheduleSnapshot();
+  toast('탭 '+list.length+'개를 닫았어요');
 }
 function closeDoc(d){
   if(isDirty(d) && d.text!==''){
@@ -1492,7 +1519,7 @@ function bigKey(e, d){
   // 입력칸 높이가 구간 전체라서 PageUp/Down은 직접 처리한다
   if((k==='PageDown' || k==='PageUp') && !ctrl && !e.altKey){
     e.preventDefault();
-    var page=Math.max(1, Math.floor(codeWrap.clientHeight/LH)-1)*(k==='PageDown'?1:-1);
+    var page=Math.max(1, Math.floor((scroller(d).clientHeight||codeWrap.clientHeight)/LH)-1)*(k==='PageDown'?1:-1);
     var head=d.ta.selectionDirection==='backward'?sA(d):sB(d), anchor=head===sA(d)?sB(d):sA(d);
     var hl0=lineOf(d.ls, head), col=head-d.ls[hl0], tl=Math.max(0, Math.min(d.ls.length-1, hl0+page));
     var np=d.ls[tl]+Math.min(col, lineEnd(d,tl)-d.ls[tl]);
@@ -1582,18 +1609,35 @@ var LINE_OPS={
   lower:function(d){ caseConv(d, false); }
 };
 function caseConv(d, up){
+  var f=function(x){ return up?x.toUpperCase():x.toLowerCase(); };
+  if(d.col || sA(d)!==sB(d)) return transformLines(d, function(l){ return l.map(f); });
   var a=sA(d), b=sB(d), v=d.text;
   if(a===b){ while(a>0 && /[\w\u00C0-\uFFFF]/.test(v[a-1])) a--; while(b<v.length && /[\w\u00C0-\uFFFF]/.test(v[b])) b++; if(a===b) return; }
   var s=v.slice(a,b); edit(d, a, b, up?s.toUpperCase():s.toLowerCase(), a, b);
 }
-// 선택한 줄들(선택이 없으면 문서 전체)에 적용
+// 적용 범위: 블록(세로) 선택이면 각 줄의 그 칸만, 선택이 있으면 선택한 글자만, 선택이 없으면 문서 전체
 function transformLines(d, fn){
   if(!d || d.grid) return;
-  var whole=sA(d)===sB(d), r=lineBlock(d);
-  var s=whole?0:r.s, e=whole?d.text.length:r.e;
+  if(d.col) return transformCol(d, fn);
+  var a=sA(d), b=sB(d), whole=a===b, s=whole?0:a, e=whole?d.text.length:b;
   var res=fn(d.text.slice(s,e).split('\n')).join('\n');
-  if(whole) setAllText(d, res, Math.min(sA(d), res.length));
+  if(whole) setAllText(d, res, Math.min(a, res.length));
   else edit(d, s, e, res, s, s+res.length);
+}
+// 블록 선택: 줄마다 블록 안의 글자만 fn에 넘기고, 결과를 같은 자리에 되돌려 넣는다 (줄 수는 그대로, 모자라면 빈칸)
+function transformCol(d, fn){
+  var b=colBox(d), segs=[], pos=[];
+  for(var i=b.top;i<=b.bot;i++){
+    var t=lineText(d,i), ia=idxAt(t,b.xa), ib=Math.max(ia, idxAt(t,b.xb));
+    segs.push(t.slice(ia,ib)); pos.push([d.ls[i]+ia, d.ls[i]+ib]);
+  }
+  var out=fn(segs.slice()).map(function(x){ return String(x).replace(/\n/g,''); });
+  while(out.length<segs.length) out.push('');
+  var s=pos[0][0], e=pos[pos.length-1][1], parts=[], last=s;
+  for(var k=0;k<pos.length;k++){ parts.push(d.text.slice(last, pos[k][0]), out[k]); last=pos[k][1]; }
+  var res=parts.join('');
+  if(res===d.text.slice(s,e)) return;
+  var col=d.col; edit(d, s, e, res); d.col=col; setCol(d, col);
 }
 var collator=new Intl.Collator('ko', {numeric:true, sensitivity:'base'});
 
@@ -1646,8 +1690,8 @@ function posFromMouse(d, e){
   return { line:line, x:Math.max(0, e.clientX-r.left-PAD_LEFT+sc.scrollLeft) };
 }
 function onEditorMouse(e, d){
-  if(d.gsel || d.vsel){ d.gsel=null; d.vsel=null; d.ta.classList.remove('away'); requestRender(); }
   if(e.button!==0) return;
+  if(d.gsel || d.vsel){ d.gsel=null; d.vsel=null; d.ta.classList.remove('away'); requestRender(); }
   if(!e.altKey){ exitCol(d); return; }
   e.preventDefault(); d.ta.focus();
   var p=posFromMouse(d, e);
@@ -1876,9 +1920,9 @@ function findStep(dir){
   updateFindCount(); requestRender(); updateStatus();
 }
 function revealPos(d, pos){
-  var line=lineOf(d.ls, pos), ta=scroller(d), y=line*LH, H=codeWrap.clientHeight;
+  var line=lineOf(d.ls, pos), ta=scroller(d), y=line*LH, H=ta.clientHeight||codeWrap.clientHeight;
   if(y<ta.scrollTop || y>ta.scrollTop+H-LH*2) ta.scrollTop=Math.max(0, y-H/2);
-  var t=lineText(d,line), x=xOf(t, pos-d.ls[line]), W=codeWrap.clientWidth;
+  var t=lineText(d,line), x=xOf(t, pos-d.ls[line]), W=ta.clientWidth||codeWrap.clientWidth;
   if(x<ta.scrollLeft || x>ta.scrollLeft+W-60) ta.scrollLeft=Math.max(0, x-W/2);
 }
 function replaceOne(){
@@ -2859,6 +2903,14 @@ $('outlineList').addEventListener('click', function(e){ var b=e.target.closest('
 // 선택한 부분(없으면 문서 전체)을 fn으로 바꾼다
 function convertSel(d, fn){
   if(!d || d.grid) return;
+  if(d.col){
+    var err=null, changed=false, any=false;
+    transformCol(d, function(segs){ return segs.map(function(x){ if(!x) return x; any=true; try{ var o=fn(x); if(o!==x) changed=true; return o; }catch(e2){ err=e2; return x; } }); });
+    if(!any) return toast('변환할 내용이 없어요');
+    if(err) return toast('변환하지 못했어요: '+(err && err.message || err), true);
+    if(!changed) return toast('바뀐 게 없어요');
+    requestRender(); updateStatus(); return;
+  }
   var a=sA(d), b=sB(d), whole=a===b, s=whole?0:a, e=whole?d.text.length:b, src=d.text.slice(s,e), out;
   if(!src) return toast('변환할 내용이 없어요');
   try{ out=fn(src); }catch(err){ return toast('변환하지 못했어요: '+(err && err.message || err), true); }
@@ -3173,17 +3225,34 @@ function applySaveOptions(d){
 
 // ================= 명령 =================
 function edCmd(fn){ return function(){ if(active && !active.grid){ exitCol(active); fn(active); } }; }
+// 블록(세로) 선택을 지우지 않고 그대로 넘기는 명령 (공백 제거·대소문자·정렬·변환)
+function selCmd(fn){ return function(){ if(active && !active.grid) fn(active); }; }
 var CMDS={
   newDoc:function(){ newDoc(); }, openFile:openFile, openFolder:openFolder,
   save:function(){ save(); }, saveAs:function(){ saveAs(); }, saveAll:saveAll,
-  closeTab:function(){ if(cmp) return closeCompare(); if(active) closeDoc(active); },
-  closeAll:function(){
-    var dirty=docs.filter(function(d){ return isDirty(d) && d.text!==''; });
-    if(dirty.length && !confirm('저장하지 않은 탭이 '+dirty.length+'개 있어요.\n저장하지 않고 모두 닫을까요?')) return;
-    closeCompare();
-    docs.slice().forEach(function(d){ rememberClosed(d); d.ta.remove(); idbDel('text:'+d.id).catch(function(){}); });
-    docs=[]; active=null; newDoc(); scheduleSnapshot();
+  closeTab:function(){ if(cmp && !ctxDoc) return closeCompare(); var t=ctxDoc||active; if(t) closeDoc(t); },
+  closeAll:function(){ closeCompare(); closeDocs(docs.slice()); },
+  closeOthers:function(){ var t=ctxDoc||active; if(!t) return; closeDocs(docs.filter(function(d){ return d!==t; }), t); },
+  closeRight:function(){ var t=ctxDoc||active; if(!t) return; closeDocs(docs.slice(docs.indexOf(t)+1), t); },
+  closeLeft:function(){ var t=ctxDoc||active; if(!t) return; closeDocs(docs.slice(0, docs.indexOf(t)), t); },
+  closeSaved:function(){ var t=ctxDoc||active; closeDocs(docs.filter(function(d){ return !(isDirty(d) && d.text!==''); }), t); },
+  copyPath:function(){ var t=ctxDoc||active; if(!t) return; var p=fullPath(t); if(navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(p).then(function(){ toast('경로를 복사했어요\n'+p); }, function(){ toast(p); }); else toast(p); },
+  ctxCut:function(){ var d=active; if(!d || d.grid) return; if(!d.col && !d.vsel && sA(d)===sB(d)) return toast('잘라낼 선택이 없어요'); d.ta.focus(); document.execCommand('cut'); },
+  ctxCopy:function(){ var d=active; if(!d || d.grid) return; if(!d.col && !d.vsel && sA(d)===sB(d)) return toast('복사할 선택이 없어요'); d.ta.focus(); document.execCommand('copy'); },
+  ctxPaste:function(){
+    var d=active; if(!d || d.grid) return; d.ta.focus();
+    if(!navigator.clipboard || !navigator.clipboard.readText) return toast('이 환경에서는 메뉴로 붙여넣지 못해요. Ctrl+V를 쓰세요', true);
+    navigator.clipboard.readText().then(function(t){
+      if(!t) return;
+      if(d.col) return colPaste(d, t);
+      t=t.replace(/\r\n?/g,'\n');
+      var s=sA(d), en=sB(d);
+      if(t.length>300000 || d.vsel){ setValue(d, d.text.slice(0,s)+t+d.text.slice(en)); setSel(d, s+t.length); revealPos(d, s+t.length); }
+      else edit(d, s, en, t);
+      requestRender(); updateStatus();
+    }, function(){ toast('클립보드를 읽지 못했어요. Ctrl+V를 쓰세요', true); });
   },
+  selectAll:function(){ var d=active; if(!d || d.grid) return; exitCol(d); d.ta.focus(); setSel(d, 0, d.text.length); requestRender(); updateStatus(); },
   compare:compareCmd, closeCompare:closeCompare, nextDiff:function(){ diffStep(1); }, prevDiff:function(){ diffStep(-1); },
   swapCompare:function(){ if(!cmp) return; var a=cmp.a, b=cmp.b; activate(b, true); compareStart(a); },
   matchBrace:edCmd(matchBrace),
@@ -3207,14 +3276,14 @@ var CMDS={
   toggleGrid:toggleGrid,
   toggleSidebar:function(){ settings.sideOpen=!settings.sideOpen; saveSettings(); applySettings(); requestRender(); },
   refreshTree:function(){ renderTree(); }, collapseTree:function(){ expanded=new Set(['']); renderTree(); },
-  trimLeading:edCmd(function(d){ transformLines(d, function(l){ return l.map(function(x){ return x.replace(/^[ \t\u3000]+/,''); }); }); }),
-  trimTrailing:edCmd(function(d){ transformLines(d, function(l){ return l.map(function(x){ return x.replace(/[ \t\u3000]+$/,''); }); }); }),
-  trimBoth:edCmd(function(d){ transformLines(d, function(l){ return l.map(function(x){ return x.replace(/^[ \t\u3000]+|[ \t\u3000]+$/g,''); }); }); }),
-  sortAsc:edCmd(function(d){ transformLines(d, function(l){ return l.slice().sort(collator.compare); }); }),
-  sortDesc:edCmd(function(d){ transformLines(d, function(l){ return l.slice().sort(collator.compare).reverse(); }); }),
-  dedupe:edCmd(function(d){ var n=0; transformLines(d, function(l){ var seen=new Set(); return l.filter(function(x){ if(seen.has(x)){ n++; return false; } seen.add(x); return true; }); }); toast('중복 줄 '+n+'개를 지웠어요'); }),
-  removeBlank:edCmd(function(d){ transformLines(d, function(l){ return l.filter(function(x){ return x.trim()!==''; }); }); }),
-  tabsToSpaces:edCmd(function(d){ var s=' '.repeat(settings.tab); transformLines(d, function(l){ return l.map(function(x){ return x.replace(/\t/g, s); }); }); }),
+  trimLeading:selCmd(function(d){ transformLines(d, function(l){ return l.map(function(x){ return x.replace(/^[ \t\u3000]+/,''); }); }); }),
+  trimTrailing:selCmd(function(d){ transformLines(d, function(l){ return l.map(function(x){ return x.replace(/[ \t\u3000]+$/,''); }); }); }),
+  trimBoth:selCmd(function(d){ transformLines(d, function(l){ return l.map(function(x){ return x.replace(/^[ \t\u3000]+|[ \t\u3000]+$/g,''); }); }); }),
+  sortAsc:selCmd(function(d){ transformLines(d, function(l){ return l.slice().sort(collator.compare); }); }),
+  sortDesc:selCmd(function(d){ transformLines(d, function(l){ return l.slice().sort(collator.compare).reverse(); }); }),
+  dedupe:selCmd(function(d){ var n=0; transformLines(d, function(l){ var seen=new Set(); return l.filter(function(x){ if(seen.has(x)){ n++; return false; } seen.add(x); return true; }); }); toast('중복 줄 '+n+'개를 지웠어요'); }),
+  removeBlank:selCmd(function(d){ transformLines(d, function(l){ return l.filter(function(x){ return x.trim()!==''; }); }); }),
+  tabsToSpaces:selCmd(function(d){ var s=' '.repeat(settings.tab); transformLines(d, function(l){ return l.map(function(x){ return x.replace(/\t/g, s); }); }); }),
   fontUp:function(){ settings.fs=Math.min(28, settings.fs+1); saveSettings(); gwDigits=0; applySettings(); updateGutterWidth(); requestRender(); },
   fontDown:function(){ settings.fs=Math.max(9, settings.fs-1); saveSettings(); gwDigits=0; applySettings(); updateGutterWidth(); requestRender(); },
   fontReset:function(){ settings.fs=14; saveSettings(); gwDigits=0; applySettings(); updateGutterWidth(); requestRender(); },
@@ -3224,9 +3293,9 @@ var CMDS={
   getExe:function(){ window.open(EXE_URL, '_blank', 'noopener'); },
   install:function(){ if(installEvt){ installEvt.prompt(); installEvt=null; $('installBtn').classList.add('hidden'); } }
 };
-Object.keys(LINE_OPS).forEach(function(k){ if(k!=='indent') CMDS[k]=edCmd(LINE_OPS[k]); });
+Object.keys(LINE_OPS).forEach(function(k){ if(k!=='indent') CMDS[k]=(k==='upper'||k==='lower'?selCmd:edCmd)(LINE_OPS[k]); });
 Object.keys(CSV_OPS).forEach(function(k){ CMDS[k]=CSV_OPS[k]; });
-Object.keys(CONVERTERS).forEach(function(k){ CMDS[k]=edCmd(function(d){ convertSel(d, CONVERTERS[k]); }); });
+Object.keys(CONVERTERS).forEach(function(k){ CMDS[k]=selCmd(function(d){ convertSel(d, CONVERTERS[k]); }); });
 
 // ================= 단축키 (바꿀 수 있음) =================
 // 기본값은 Notepad++와 같게. 일반 브라우저 탭에서는 Ctrl+N/W/Tab을 브라우저가 먼저 가져가므로 Ctrl+Alt+N 같은 대체 키도 함께 둔다
@@ -3234,7 +3303,7 @@ var KEYMAP=[
   ['h','파일과 탭'],
   ['newDoc','새 문서',['Ctrl+N','Ctrl+Alt+N']], ['openFile','파일 열기','Ctrl+O'], ['openFolder','폴더 열기',''],
   ['save','저장','Ctrl+S'], ['saveAs','다른 이름으로 저장','Ctrl+Alt+S'], ['saveAll','모두 저장','Ctrl+Shift+S'],
-  ['closeTab','탭 닫기',['Ctrl+W','Ctrl+Alt+W']], ['closeAll','모든 탭 닫기','Ctrl+Shift+W'], ['reopenTab','닫은 탭 다시 열기',['Ctrl+Shift+T','Ctrl+Alt+T']],
+  ['closeTab','탭 닫기',['Ctrl+W','Ctrl+Alt+W']], ['closeAll','모든 탭 닫기','Ctrl+Shift+W'], ['closeOthers','다른 탭 모두 닫기',''], ['closeRight','오른쪽 탭 모두 닫기',''], ['closeLeft','왼쪽 탭 모두 닫기',''], ['closeSaved','변경 없는 탭 모두 닫기',''], ['reopenTab','닫은 탭 다시 열기',['Ctrl+Shift+T','Ctrl+Alt+T']],
   ['nextTab','다음 탭',['Ctrl+Tab','Ctrl+PageDown','Alt+PageDown']], ['prevTab','이전 탭',['Ctrl+Shift+Tab','Ctrl+PageUp','Alt+PageUp']],
   ['toggleSidebar','탐색기 보이기/숨기기',''],
   ['h','줄 편집'],
@@ -3293,7 +3362,7 @@ function renderKeys(){
     html.push('<span>'+r[1]+'</span><button class="combo'+(c?'':' empty')+(recording===r[0]?' rec':'')+'" data-rec="'+r[0]+'">'+(recording===r[0]?'키를 누르세요…':(c||'없음'))+'</button>');
   });
   html.push('<div class="h">고정 키</div>');
-  [['글꼴 크기 조절','Ctrl+마우스 휠'],['블록(세로) 편집','Alt+드래그'],['블록 선택 늘리기','Alt+Shift+방향키'],['북마크 켜기/끄기','줄 번호 Ctrl+클릭'],['들여쓰기 / 내어쓰기','Tab · Shift+Tab'],['탭 번호로 가기','Alt+1 ~ 9'],['찾기 창에서 모두 바꾸기','Ctrl+Enter']]
+  [['글꼴 크기 조절','Ctrl+마우스 휠'],['블록(세로) 편집','Alt+드래그'],['블록 선택 늘리기','Alt+Shift+방향키'],['북마크 켜기/끄기','줄 번호 Ctrl+클릭'],['들여쓰기 / 내어쓰기','Tab · Shift+Tab'],['탭 번호로 가기','Alt+1 ~ 9'],['탭 여러 개 닫기','탭 오른쪽 클릭'],['편집 메뉴','편집기 오른쪽 클릭'],['찾기 창에서 모두 바꾸기','Ctrl+Enter']]
     .forEach(function(x){ html.push('<span>'+x[0]+'</span><kbd>'+x[1]+'</kbd>'); });
   html.push('<div class="note">바꾸려면 오른쪽 키를 누른 다음 새 키 조합을 누르세요. Backspace는 지우기, Esc는 취소예요.<br>'+
     'Ctrl+N, Ctrl+W, Ctrl+Tab은 실행 파일(exe) 버전에서 Notepad++처럼 동작해요. 일반 브라우저 탭에서는 브라우저가 먼저 가져가므로 Ctrl+Alt+N, Ctrl+Alt+W, Ctrl+PageDown을 쓰세요.<br>'+
@@ -3301,7 +3370,8 @@ function renderKeys(){
     '"파일 자동 저장"을 켜면 한 번 저장한 파일은 편집하고 2초 뒤 디스크에도 저장돼요.<br>'+
     '열어 둔 파일을 다른 프로그램이 고치면 자동으로 다시 불러와요. 편집 중이던 탭이면 어떻게 할지 물어봐요.<br>'+
     'ABAP에서는 IF·LOOP·FORM·METHOD 같은 줄에서 Ctrl+B를 누르면 짝이 되는 END 줄로 가요.<br>'+
-    '자동 완성은 Ctrl+Space를 눌렀을 때만 나와요 (문서에 있는 단어와 문법 키워드). 열 편집(Alt+C)은 블록이나 여러 줄을 선택한 뒤 숫자·글자를 모든 줄의 같은 칸에 넣어요.</div>');
+    '자동 완성은 Ctrl+Space를 눌렀을 때만 나와요 (문서에 있는 단어와 문법 키워드). 열 편집(Alt+C)은 블록이나 여러 줄을 선택한 뒤 숫자·글자를 모든 줄의 같은 칸에 넣어요.<br>'+
+    '공백 삭제·대소문자·정렬·변환은 선택한 부분에만 적용돼요. 블록(Alt+드래그)을 잡으면 각 줄의 그 칸에만, 선택이 없으면 문서 전체에 적용돼요.</div>');
   box.innerHTML=html.join('');
 }
 $('keysList').addEventListener('click', function(e){
@@ -3335,7 +3405,7 @@ document.addEventListener('keydown', function(e){
   if(cmd){
     if(ED_CMDS[cmd] && (!active || document.activeElement!==active.ta)) return;
     e.preventDefault(); e.stopPropagation();
-    CMDS[cmd](); return;
+    ctxDoc=null; CMDS[cmd](); return;
   }
   if(e.altKey && !e.ctrlKey && !e.shiftKey && /^Digit[1-9]$/.test(e.code)){ var t=docs[+e.code.slice(5)-1]; if(t){ e.preventDefault(); activate(t); } return; }
   if(e.key==='Escape' && ac.open){ e.preventDefault(); acClose(); return; }
@@ -3348,6 +3418,7 @@ document.addEventListener('keydown', function(e){
 }, true);
 
 document.addEventListener('click', function(e){
+  if(!e.target.closest('#ctxTab')) ctxDoc=null;
   var m=e.target.closest('[data-menu]');
   document.querySelectorAll('.menu.open').forEach(function(x){ if(!m || x.id!==m.dataset.menu) x.classList.remove('open'); });
   if(m){ $(m.dataset.menu).classList.toggle('open'); return; }
@@ -3356,7 +3427,12 @@ document.addEventListener('click', function(e){
     var inMenu=c.closest('.menu');
     if(inMenu && !c.closest('.step')) inMenu.classList.remove('open');
     CMDS[c.dataset.cmd]();
+    ctxDoc=null;
   }
+});
+document.addEventListener('contextmenu', function(e){
+  // 편집기·탭 밖에서 오른쪽 클릭하면 열려 있던 메뉴만 닫는다
+  if(!e.target.closest('.menu')) document.querySelectorAll('.menu.open').forEach(function(x){ x.classList.remove('open'); });
 });
 $('setTheme').addEventListener('change', function(){ settings.theme=this.value; saveSettings(); applySettings(); });
 $('setFont').addEventListener('change', function(){ settings.font=this.value; saveSettings(); applySettings(); if(document.fonts) document.fonts.ready.then(function(){ measureFont(); requestRender(); }); requestRender(); });
@@ -3388,6 +3464,48 @@ $('editorHost').addEventListener('wheel', function(e){
 }, { passive:false });
 window.addEventListener('resize', requestRender);
 window.addEventListener('beforeunload', function(e){ if(snapPending){ snapshot(); e.preventDefault(); e.returnValue=''; } });
+
+// ================= 오른쪽 클릭 메뉴 =================
+// ctxDoc: 탭 메뉴를 연 탭. 메뉴 명령이 끝나거나 메뉴 밖을 누르면 비운다
+var ctxDoc=null;
+function escHtml(s){ return String(s).replace(/[&<>"]/g, function(c){ return c==='&'?'&amp;':c==='<'?'&lt;':c==='>'?'&gt;':'&quot;'; }); }
+function ctxItem(id, label, key){ return '<button data-cmd="'+id+'"><span>'+label+'</span><kbd>'+escHtml(key!=null?key:(keysOf(id)[0]||''))+'</kbd></button>'; }
+function showCtx(id, e, html){
+  document.querySelectorAll('.menu.open').forEach(function(x){ x.classList.remove('open'); });
+  var m=$(id); m.innerHTML=html; m.style.left='0px'; m.style.top='0px'; m.classList.add('open');
+  var W=document.documentElement.clientWidth, H=document.documentElement.clientHeight, w=m.offsetWidth, h=m.offsetHeight;
+  m.style.left=Math.max(0, Math.min(e.clientX, W-w-4))+'px';
+  m.style.top=Math.max(0, Math.min(e.clientY, H-h-4))+'px';
+}
+function openTabCtx(e, d){
+  ctxDoc=d;
+  var i=d?docs.indexOf(d):-1, n=docs.length, html=[];
+  if(d){
+    html.push('<div class="cap">'+escHtml(fullPath(d))+'</div>');
+    html.push(ctxItem('closeTab','닫기'), ctxItem('closeOthers','다른 탭 모두 닫기'), ctxItem('closeRight','오른쪽 탭 모두 닫기'), ctxItem('closeLeft','왼쪽 탭 모두 닫기'), '<hr>');
+  }
+  html.push(ctxItem('closeSaved','변경 없는 탭 모두 닫기'), ctxItem('closeAll','모든 탭 닫기'), '<hr>', ctxItem('reopenTab','닫은 탭 다시 열기'));
+  if(d && (d.path || d.hostPath)) html.push(ctxItem('copyPath','경로 복사',''));
+  showCtx('ctxTab', e, html.join(''));
+  var m=$('ctxTab'), dis=function(id, on){ var b=m.querySelector('[data-cmd="'+id+'"]'); if(b) b.disabled=!!on; };
+  dis('closeOthers', n<=1); dis('closeRight', i>=n-1); dis('closeLeft', i<=0); dis('reopenTab', !closedTabs.length);
+  dis('closeSaved', !docs.some(function(x){ return !(isDirty(x) && x.text!==''); }));
+}
+$('tabbar').addEventListener('contextmenu', function(e){ e.preventDefault(); openTabCtx(e, null); });
+function openEditCtx(e, d){
+  if(d.grid) return;
+  var scope=d.col?'블록(세로 선택)의 각 줄에 적용':(d.vsel || sA(d)!==sB(d))?'선택한 부분에만 적용':'선택이 없어 문서 전체에 적용';
+  var html=[ctxItem('ctxCut','잘라내기','Ctrl+X'), ctxItem('ctxCopy','복사','Ctrl+C'), ctxItem('ctxPaste','붙여넣기','Ctrl+V'), ctxItem('selectAll','모두 선택','Ctrl+A'), '<hr>',
+    ctxItem('dupLine','줄 복제'), ctxItem('delLine','줄 삭제'), ctxItem('toggleComment','주석 켜기/끄기'), '<hr>',
+    '<div class="cap">'+scope+'</div>',
+    ctxItem('trimLeading','시작 공백 삭제'), ctxItem('trimTrailing','끝 공백 삭제'), ctxItem('trimBoth','시작과 끝 공백 삭제'),
+    ctxItem('upper','대문자로'), ctxItem('lower','소문자로'),
+    ctxItem('sortAsc','줄 정렬 (오름차순)'), ctxItem('sortDesc','줄 정렬 (내림차순)'), ctxItem('dedupe','중복 줄 제거'), ctxItem('removeBlank','빈 줄 제거'), ctxItem('tabsToSpaces','탭 → 공백'), '<hr>',
+    ctxItem('matchBrace','짝 괄호·블록으로 이동'), ctxItem('toggleBookmark','북마크 켜기/끄기'), ctxItem('colEditor','열 편집')];
+  showCtx('ctxEdit', e, html.join(''));
+}
+// 메뉴를 눌러도 편집기 포커스와 선택이 그대로 남게 한다 (잘라내기·복사가 선택에 바로 적용되도록)
+['ctxTab','ctxEdit'].forEach(function(id){ $(id).addEventListener('mousedown', function(e){ e.preventDefault(); }); });
 
 var toastTimer=0;
 function toast(msg, err){

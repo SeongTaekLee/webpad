@@ -26,8 +26,8 @@ using Microsoft.Web.WebView2.WinForms;
 [assembly: AssemblyTitle("WebPad")]
 [assembly: AssemblyProduct("WebPad")]
 [assembly: AssemblyDescription("웹패드 - 가벼운 코드 편집기")]
-[assembly: AssemblyVersion("1.2.7.0")]
-[assembly: AssemblyFileVersion("1.2.7.0")]
+[assembly: AssemblyVersion("1.2.8.0")]
+[assembly: AssemblyFileVersion("1.2.8.0")]
 
 static class Program
 {
@@ -611,11 +611,30 @@ class MainForm : Form
         {
             string[] p = File.ReadAllText(BoundsFile).Split(',');
             Rectangle r = new Rectangle(int.Parse(p[0]), int.Parse(p[1]), int.Parse(p[2]), int.Parse(p[3]));
+            // 창이 가장 많이 걸쳐 있는 화면의 작업 영역(작업 표시줄 제외) 안으로 맞춘다.
+            // 다른 모니터·해상도에서 저장한 크기를 그대로 쓰면 창 아래쪽이 작업 표시줄에 가려 상태 표시줄이 안 보인다.
+            Screen best = null; long bestArea = 0;
             foreach (Screen s in Screen.AllScreens)
-                if (s.WorkingArea.IntersectsWith(r)) { Bounds = r; break; }
+            {
+                Rectangle x = Rectangle.Intersect(s.WorkingArea, r);
+                long area = x.IsEmpty ? 0 : (long)x.Width * x.Height;
+                if (area > bestArea) { bestArea = area; best = s; }
+            }
+            if (best != null) Bounds = FitTo(r, best.WorkingArea);
             if (p.Length > 4 && p[4] == "max") WindowState = FormWindowState.Maximized;
         }
         catch (Exception) { }
+    }
+
+    static Rectangle FitTo(Rectangle r, Rectangle wa)
+    {
+        if (r.Width > wa.Width) r.Width = wa.Width;
+        if (r.Height > wa.Height) r.Height = wa.Height;
+        if (r.Right > wa.Right) r.X = wa.Right - r.Width;
+        if (r.Bottom > wa.Bottom) r.Y = wa.Bottom - r.Height;
+        if (r.X < wa.X) r.X = wa.X;
+        if (r.Y < wa.Y) r.Y = wa.Y;
+        return r;
     }
 
     void SaveBounds()
