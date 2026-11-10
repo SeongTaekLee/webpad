@@ -80,7 +80,7 @@
   .menu label.row{ cursor:pointer; }
   .menu button:disabled{ opacity:.4; cursor:default; background:none; }
   .menu.ctx{ position:fixed; top:0; left:0; max-height:calc(100vh - 12px); overflow-y:auto; min-width:220px; z-index:60; }
-  .menu.ctx .cap{ padding:5px 10px 2px; color:var(--muted); font-size:11px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:320px; }
+  .menu.ctx .cap{ white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:320px; }
 
   #main{ flex:1; display:flex; min-height:0; }
   #sidebar{ width:var(--side); flex:none; display:flex; flex-direction:column; background:var(--panel); border-right:1px solid var(--line); min-width:0; }
@@ -142,10 +142,15 @@
   .oi .kind{ color:var(--t-k); font-weight:700; min-width:72px; flex:none; overflow:hidden; text-overflow:ellipsis; }
   .oi .nm{ overflow:hidden; text-overflow:ellipsis; }
   .modal h3 .note{ color:var(--muted); font-weight:400; font-size:12px; }
-  #menuTools{ min-width:320px; }
+  #menuTools{ min-width:280px; }
   #menuJson{ min-width:330px; }
-  #menuRecent{ min-width:300px; max-width:560px; }
+  .menu .cap{ padding:4px 10px 2px; color:var(--muted); font-size:11px; }
+  #menuFile{ min-width:320px; max-width:560px; }
+  #menuRecent{ max-height:40vh; overflow-y:auto; }
   #menuRecent button{ display:block; }
+  #menuEdit, #menuFind, #menuView{ min-width:300px; }
+  #menuSettings{ min-width:280px; }
+  .menu .row select{ max-width:180px; }
   #menuRecent button .sub{ display:block; color:var(--muted); font-size:11px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   #resultsHost{ flex:none; height:240px; display:flex; flex-direction:column; border-top:1px solid var(--line); background:var(--bg); min-height:0; }
   #resultsList{ flex:1; overflow:auto; font:13px var(--mono); }
@@ -266,24 +271,33 @@
 <div id="app">
   <div id="toolbar">
     <div class="brand">웹<span>패드</span></div>
-    <button class="tb" data-cmd="toggleSidebar" title="탐색기">📁 탐색기</button>
-    <div class="sep"></div>
-    <button class="tb" data-cmd="newDoc">새 문서</button>
-    <button class="tb" data-cmd="openFile">열기</button>
-    <button class="tb" data-cmd="openFolder">폴더 열기</button>
-    <button class="tb" data-cmd="save">저장</button>
-    <button class="tb" data-cmd="saveAs">다른 이름으로</button>
     <div class="menu-wrap">
-      <button class="tb" data-menu="menuRecent" title="최근에 연 파일">최근 ▾</button>
-      <div class="menu" id="menuRecent"></div>
+      <button class="tb" data-menu="menuFile">파일 ▾</button>
+      <div class="menu" id="menuFile">
+        <button data-cmd="newDoc">새 문서 <kbd data-key="newDoc"></kbd></button>
+        <button data-cmd="openFile">열기 <kbd data-key="openFile"></kbd></button>
+        <button data-cmd="openFolder">폴더 열기 <kbd data-key="openFolder"></kbd></button>
+        <hr>
+        <button data-cmd="save">저장 <kbd data-key="save"></kbd></button>
+        <button data-cmd="saveAs">다른 이름으로 저장 <kbd data-key="saveAs"></kbd></button>
+        <button data-cmd="saveAll">모두 저장 <kbd data-key="saveAll"></kbd></button>
+        <hr>
+        <button data-cmd="closeTab">탭 닫기 <kbd data-key="closeTab"></kbd></button>
+        <button data-cmd="closeOthers">다른 탭 모두 닫기 <kbd data-key="closeOthers"></kbd></button>
+        <button data-cmd="closeSaved">변경 없는 탭 모두 닫기 <kbd data-key="closeSaved"></kbd></button>
+        <button data-cmd="closeAll">모든 탭 닫기 <kbd data-key="closeAll"></kbd></button>
+        <button data-cmd="reopenTab">닫은 탭 다시 열기 <kbd data-key="reopenTab"></kbd></button>
+        <hr>
+        <div class="cap">최근에 연 파일</div>
+        <div id="menuRecent"></div>
+        <hr>
+        <button data-cmd="getExe">실행 파일(.exe) 받기</button>
+      </div>
     </div>
-    <div class="sep"></div>
-    <button class="tb" data-cmd="find">찾기</button>
-    <button class="tb" data-cmd="replace">바꾸기</button>
     <div class="menu-wrap">
       <button class="tb" data-menu="menuEdit">편집 ▾</button>
       <div class="menu" id="menuEdit">
-        <div class="row" style="color:var(--muted);font-size:12px;padding-top:2px;padding-bottom:2px">공백·대소문자·정렬은 선택한 부분(블록 포함)에만, 선택이 없으면 문서 전체에</div>
+        <button data-cmd="selectAll">모두 선택 <kbd>Ctrl+A</kbd></button>
         <button data-cmd="dupLine">줄 복제 <kbd data-key="dupLine"></kbd></button>
         <button data-cmd="delLine">줄 삭제 <kbd data-key="delLine"></kbd></button>
         <button data-cmd="lineBelow">아래에 줄 추가 <kbd data-key="lineBelow"></kbd></button>
@@ -292,9 +306,11 @@
         <button data-cmd="moveDown">줄 아래로 이동 <kbd data-key="moveDown"></kbd></button>
         <button data-cmd="toggleComment">주석 켜기/끄기 <kbd data-key="toggleComment"></kbd></button>
         <hr>
+        <div class="cap">선택한 부분(블록 포함)에만, 선택이 없으면 문서 전체에</div>
         <button data-cmd="trimLeading">시작 공백 삭제 <kbd data-key="trimLeading"></kbd></button>
         <button data-cmd="trimTrailing">끝 공백 삭제 <kbd data-key="trimTrailing"></kbd></button>
         <button data-cmd="trimBoth">시작과 끝 공백 삭제 <kbd data-key="trimBoth"></kbd></button>
+        <button data-cmd="tabsToSpaces">탭 → 공백 <kbd data-key="tabsToSpaces"></kbd></button>
         <hr>
         <button data-cmd="upper">대문자로 <kbd data-key="upper"></kbd></button>
         <button data-cmd="lower">소문자로 <kbd data-key="lower"></kbd></button>
@@ -302,16 +318,56 @@
         <button data-cmd="sortDesc">줄 정렬 (내림차순) <kbd data-key="sortDesc"></kbd></button>
         <button data-cmd="dedupe">중복 줄 제거 <kbd data-key="dedupe"></kbd></button>
         <button data-cmd="removeBlank">빈 줄 제거 <kbd data-key="removeBlank"></kbd></button>
-        <button data-cmd="tabsToSpaces">탭 → 공백 <kbd data-key="tabsToSpaces"></kbd></button>
+        <hr>
+        <button data-cmd="colEditor">열 편집 (블록·여러 줄에 숫자·글자 넣기) <kbd data-key="colEditor"></kbd></button>
+        <button data-cmd="autocomplete">자동 완성 <kbd data-key="autocomplete"></kbd></button>
+      </div>
+    </div>
+    <div class="menu-wrap">
+      <button class="tb" data-menu="menuFind">찾기 ▾</button>
+      <div class="menu" id="menuFind">
+        <button data-cmd="find">찾기 <kbd data-key="find"></kbd></button>
+        <button data-cmd="replace">바꾸기 <kbd data-key="replace"></kbd></button>
+        <button data-cmd="findNext">다음 찾기 <kbd data-key="findNext"></kbd></button>
+        <button data-cmd="findPrev">이전 찾기 <kbd data-key="findPrev"></kbd></button>
+        <button data-cmd="findAll">모두 찾기 (결과 목록) <kbd data-key="findAll"></kbd></button>
+        <button data-cmd="findInFiles">폴더에서 찾기 <kbd data-key="findInFiles"></kbd></button>
         <hr>
         <button data-cmd="gotoLine">줄로 이동 <kbd data-key="gotoLine"></kbd></button>
+        <button data-cmd="outline">구조 목록 (함수·메서드·클래스) <kbd data-key="outline"></kbd></button>
+        <button data-cmd="matchBrace">짝 괄호·블록으로 이동 <kbd data-key="matchBrace"></kbd></button>
+        <hr>
+        <button data-cmd="toggleBookmark">북마크 켜기/끄기 <kbd data-key="toggleBookmark"></kbd></button>
+        <button data-cmd="nextBookmark">다음 북마크 <kbd data-key="nextBookmark"></kbd></button>
+        <button data-cmd="prevBookmark">이전 북마크 <kbd data-key="prevBookmark"></kbd></button>
+        <button data-cmd="clearBookmarks">북마크 모두 지우기 <kbd data-key="clearBookmarks"></kbd></button>
+      </div>
+    </div>
+    <div class="menu-wrap">
+      <button class="tb" data-menu="menuView">보기 ▾</button>
+      <div class="menu" id="menuView">
+        <button data-cmd="toggleSidebar">탐색기 보이기/숨기기 <kbd data-key="toggleSidebar"></kbd></button>
+        <button data-cmd="toggleGrid" id="gridBtn" title="CSV 파일을 표로 편집">CSV 표로 편집 <kbd data-key="toggleGrid"></kbd></button>
+        <button data-cmd="compare">두 탭 비교 <kbd data-key="compare"></kbd></button>
+        <button data-cmd="closeCompare">비교 닫기 <kbd data-key="closeCompare"></kbd></button>
+        <hr>
+        <label class="row" title="공백은 ·, 탭은 점, 줄 끝은 ¶로 보여줘요">공백·탭·줄 끝 표시 <input type="checkbox" id="setWs"></label>
+        <div class="row">글꼴 크기
+          <span class="step"><button data-cmd="fontDown">−</button><b id="fsVal">14</b><button data-cmd="fontUp">+</button></span>
+        </div>
+        <div class="row">글꼴
+          <select id="setFont"><option value="nanum">나눔고딕코딩</option><option value="d2">D2Coding (설치된 경우)</option><option value="consolas">Consolas</option></select>
+        </div>
+        <div class="row">테마
+          <select id="setTheme"><option value="">시스템</option><option value="light">밝게</option><option value="dark">어둡게</option></select>
+        </div>
       </div>
     </div>
     <div class="menu-wrap">
       <button class="tb" data-menu="menuJson" title="ABAP · SQL · XML · JSON 자동 포맷">정리 ▾</button>
       <div class="menu" id="menuJson">
         <button data-cmd="autoFormat">자동 포맷 (문법에 맞게) <kbd data-key="autoFormat"></kbd></button>
-        <div class="row" style="color:var(--muted);font-size:12px;padding-top:2px;padding-bottom:2px">선택한 부분만, 없으면 문서 전체</div>
+        <div class="cap">선택한 부분만, 없으면 문서 전체</div>
         <hr>
         <button data-cmd="fmtAbap">ABAP Pretty Printer <kbd data-key="fmtAbap"></kbd></button>
         <button data-cmd="fmtSql">SQL 정리 (강 정렬) <kbd data-key="fmtSql"></kbd></button>
@@ -327,58 +383,34 @@
       </div>
     </div>
     <div class="menu-wrap">
-      <button class="tb" data-menu="menuTools">도구 ▾</button>
+      <button class="tb" data-menu="menuTools">변환 ▾</button>
       <div class="menu" id="menuTools">
-        <button data-cmd="outline">구조 목록 (함수·메서드·클래스) <kbd data-key="outline"></kbd></button>
-        <button data-cmd="matchBrace">짝 괄호·블록으로 이동 <kbd data-key="matchBrace"></kbd></button>
-        <hr>
-        <button data-cmd="toggleBookmark">북마크 켜기/끄기 <kbd data-key="toggleBookmark"></kbd></button>
-        <button data-cmd="nextBookmark">다음 북마크 <kbd data-key="nextBookmark"></kbd></button>
-        <button data-cmd="prevBookmark">이전 북마크 <kbd data-key="prevBookmark"></kbd></button>
-        <button data-cmd="clearBookmarks">북마크 모두 지우기 <kbd data-key="clearBookmarks"></kbd></button>
-        <hr>
-        <div class="row" style="color:var(--muted);font-size:12px;padding-top:2px;padding-bottom:2px">변환 (선택한 부분, 없으면 문서 전체)</div>
+        <div class="cap">선택한 부분, 없으면 문서 전체</div>
         <button data-cmd="b64Enc">Base64로 인코딩</button>
         <button data-cmd="b64Dec">Base64 디코딩</button>
+        <hr>
         <button data-cmd="urlEnc">URL 인코딩</button>
         <button data-cmd="urlDec">URL 디코딩</button>
+        <hr>
         <button data-cmd="htmlEsc">HTML 이스케이프 (&amp;lt; &amp;amp;)</button>
         <button data-cmd="htmlUnesc">HTML 이스케이프 풀기</button>
         <button data-cmd="uniEsc">유니코드 이스케이프 (\uXXXX)</button>
         <button data-cmd="uniUnesc">유니코드 이스케이프 풀기</button>
+        <hr>
         <button data-cmd="jsonStr">JSON 문자열로 감싸기</button>
         <button data-cmd="jsonUnstr">JSON 문자열 풀기</button>
         <button data-cmd="epochDate">유닉스 시간 → 날짜</button>
-        <hr>
-        <button data-cmd="reopenTab">닫은 탭 다시 열기 <kbd data-key="reopenTab"></kbd></button>
       </div>
     </div>
     <div class="menu-wrap">
-      <button class="tb" data-menu="menuLang" id="langBtn" title="문법(언어) 고르기">언어 ▾</button>
-      <div class="menu langs" id="menuLang"></div>
-    </div>
-    <button class="tb" data-cmd="toggleGrid" id="gridBtn" title="CSV를 표로 편집">CSV 표</button>
-    <button class="tb" data-cmd="compare" title="두 탭 비교 (Ctrl+Alt+C)">비교</button>
-    <div class="spacer"></div>
-    <button class="tb hidden" id="installBtn" data-cmd="install">앱으로 설치</button>
-    <div class="menu-wrap">
       <button class="tb" data-menu="menuSettings">설정 ▾</button>
-      <div class="menu right" id="menuSettings">
-        <div class="row">테마
-          <select id="setTheme"><option value="">시스템</option><option value="light">밝게</option><option value="dark">어둡게</option></select>
-        </div>
-        <div class="row">글꼴
-          <select id="setFont"><option value="nanum">나눔고딕코딩</option><option value="d2">D2Coding (설치된 경우)</option><option value="consolas">Consolas</option></select>
-        </div>
-        <div class="row">글꼴 크기
-          <span class="step"><button data-cmd="fontDown">−</button><b id="fsVal">14</b><button data-cmd="fontUp">+</button></span>
-        </div>
+      <div class="menu" id="menuSettings">
         <div class="row">탭 크기
           <select id="setTab"><option>2</option><option selected>4</option><option>8</option></select>
         </div>
         <label class="row">탭 대신 공백 넣기 <input type="checkbox" id="setSpaces"></label>
+        <hr>
         <label class="row">파일 자동 저장 <input type="checkbox" id="setAutoSave"></label>
-        <label class="row" title="공백은 ·, 탭은 점, 줄 끝은 ¶로 보여줘요">공백·탭·줄 끝 표시 <input type="checkbox" id="setWs"></label>
         <label class="row">저장할 때 줄 끝 공백 제거 <input type="checkbox" id="setTrimSave"></label>
         <label class="row">저장할 때 마지막 줄 바꿈 넣기 <input type="checkbox" id="setFinalNl"></label>
         <label class="row" id="hiddenRow" title="탐색기에 $Recycle.Bin, System Volume Information 같은 숨김·시스템 항목도 보여줘요 (exe 버전)">숨김·시스템 파일 표시 <input type="checkbox" id="setHidden"></label>
@@ -386,9 +418,18 @@
         <button data-cmd="help">단축키 보기·바꾸기 <kbd data-key="help"></kbd></button>
         <button data-cmd="importUdl">Notepad++ 사용자 언어(XML) 불러오기</button>
         <button data-cmd="clearUdl">불러온 사용자 언어 지우기</button>
-        <hr>
-        <button data-cmd="getExe">실행 파일(.exe) 받기</button>
       </div>
+    </div>
+    <div class="sep"></div>
+    <button class="tb quick" data-cmd="toggleSidebar" title="탐색기 보이기/숨기기">📁</button>
+    <button class="tb quick" data-cmd="newDoc" title="새 문서">새 문서</button>
+    <button class="tb quick" data-cmd="save" title="저장 (Ctrl+S)">저장</button>
+    <button class="tb quick" data-cmd="find" title="찾기 (Ctrl+F)">찾기</button>
+    <div class="spacer"></div>
+    <button class="tb hidden" id="installBtn" data-cmd="install">앱으로 설치</button>
+    <div class="menu-wrap">
+      <button class="tb" data-menu="menuLang" id="langBtn" title="문법(언어) 고르기">언어 ▾</button>
+      <div class="menu langs right" id="menuLang"></div>
     </div>
   </div>
 
@@ -3580,9 +3621,10 @@ function renderRecent(){
   if(recent.length) html.push('<hr><button data-recent="clear">목록 지우기</button>');
   m.innerHTML=html.join('');
 }
-document.querySelector('[data-menu="menuRecent"]').addEventListener('click', renderRecent, true);
+document.querySelector('[data-menu="menuFile"]').addEventListener('click', renderRecent, true);
 $('menuRecent').addEventListener('click', function(e){
   var b=e.target.closest('[data-recent]'); if(!b) return;
+  $('menuFile').classList.remove('open');
   if(b.dataset.recent==='clear'){ recent=[]; idbSet('recent', recent).catch(function(){}); toast('최근 파일 목록을 지웠어요'); return; }
   var r=recent[+b.dataset.recent]; if(!r) return;
   if(r.hostPath && HOST) hostOpenPath(r.hostPath);
