@@ -22,4 +22,7 @@ if not exist dist mkdir dist
   /resource:fonts\OFL.txt,app/fonts/OFL.txt ^
   /resource:icons\icon.svg,app/icons/icon.svg ^
   /out:dist\WebPad.exe launcher\WebPad.cs
+rem Release zip holding only the exe: browsers block a bare unsigned exe more often than a zip.
+if exist dist\WebPad.zip del dist\WebPad.zip
+powershell -NoProfile -Command "Compress-Archive -Path dist\WebPad.exe -DestinationPath dist\WebPad.zip -CompressionLevel Optimal"
 endlocal

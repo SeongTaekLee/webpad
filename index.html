@@ -291,7 +291,7 @@
         <div class="cap">최근에 연 파일</div>
         <div id="menuRecent"></div>
         <hr>
-        <button data-cmd="getExe">실행 파일(.exe) 받기</button>
+        <button data-cmd="getExe" title="WebPad.zip 을 받아 압축을 풀고 WebPad.exe 를 실행하세요">실행 파일 받기 (WebPad.zip)</button>
       </div>
     </div>
     <div class="menu-wrap">
@@ -607,7 +607,7 @@
 var $=function(id){ return document.getElementById(id); };
 var FS_API=!!window.showOpenFilePicker;
 var HOST=!!(window.chrome && window.chrome.webview);
-var EXE_URL='https://github.com/SeongTaekLee/webpad/releases/latest';
+var EXE_URL='https://github.com/SeongTaekLee/webpad/releases/latest/download/WebPad.zip';
 var HL_LIMIT=4000;
 var PAD_TOP=4, PAD_LEFT=12;
 

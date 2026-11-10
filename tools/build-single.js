@@ -18,7 +18,7 @@ rep('href="icons/icon.svg"', `href="${dataUri('icons/icon.svg', 'image/svg+xml')
 html = html.replace(/<meta http-equiv="Content-Security-Policy"[^>]*>/, `<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; font-src data:; img-src data: blob:; connect-src 'none'; form-action 'none'; base-uri 'none'">`);
 if (!html.includes("connect-src 'none'")) throw new Error('CSP not replaced');
 // 파일 버전에서는 exe 받기 링크(외부 사이트)를 숨긴다
-rep('<button data-cmd="getExe">실행 파일(.exe) 받기</button>', '');
+html = html.replace(/<button data-cmd="getExe"[^>]*>[^<]*<\/button>/, '');
 
 fs.mkdirSync(path.join(root, 'dist'), { recursive: true });
 const out = path.join(root, 'dist', 'webpad.html');

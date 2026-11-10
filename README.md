@@ -7,15 +7,27 @@ Notepad++를 쓸 수 없는 보안 환경을 위한 가벼운 코드 편집기�
 | 형태 | 쓰는 법 | 이럴 때 |
 |---|---|---|
 | **`webpad.html`** (파일 하나, 1.5MB) | 더블클릭하면 엣지/크롬에서 열려요. 인터넷이 필요 없어요. | exe 실행이 막힌 PC, 외부 사이트가 막힌 망 |
-| **`WebPad.exe`** (포터블, 2.5MB) | 아무 폴더에 두고 실행해요. 데이터는 exe 옆 `WebPad_data`에 저장돼요. | Notepad++와 똑같은 단축키(Ctrl+N/W/Tab), 아무 폴더나 열기, 파일 연결 |
+| **`WebPad.zip`** (안에 WebPad.exe 하나, 2.5MB) | 압축을 풀고 `WebPad.exe`를 아무 폴더에 두고 실행해요. 데이터는 exe 옆 `WebPad_data`에 저장돼요. | Notepad++와 똑같은 단축키(Ctrl+N/W/Tab), 아무 폴더나 열기, 파일 연결 |
 | **웹** https://seongtaeklee.github.io/webpad/ | 접속하거나 "앱으로 설치" | 인터넷이 되는 PC |
+
+### 받을 때 "위험한 파일" 경고가 뜨면
+
+exe에 코드 서명이 없어서 브라우저와 윈도우가 처음 보는 파일로 취급해요. 바이러스가 아니고, 아래 "빌드"대로 소스를 그대로 빌드한 파일이에요. 그래서 exe를 zip으로 싸서 배포해요.
+
+| 어디서 | 어떻게 |
+|---|---|
+| **크롬** 다운로드 표시줄에 "일반적으로 다운로드되지 않는 파일" | 다운로드 목록(Ctrl+J)에서 해당 항목의 **⋯ → 보관** (또는 "위험한 파일 보관") |
+| **엣지** "안전하지 않은 다운로드" | 다운로드 항목에 마우스를 올리고 **⋯ → 유지 → 그래도 유지** |
+| **실행할 때** "Windows의 PC 보호" (SmartScreen) | **추가 정보 → 실행**. 한 번만 누르면 다음부터 안 떠요 |
+| 회사 정책으로 exe 자체가 막힘 | `webpad.html`을 쓰세요. 기능은 같아요 (아무 폴더나 열기·파일 연결만 빼고) |
+
+경고가 아예 안 뜨게 하려면 코드 서명 인증서가 필요해요. 오픈소스용 무료 서명(SignPath) 신청을 검토 중이에요.
 
 ### 보안
 
 - 외부로 나가는 통신이 없어요. 모든 형태의 HTML에 CSP(`connect-src`)를 넣어서 브라우저가 외부 요청을 막아요. `webpad.html`은 `default-src 'none'`이라 파일 밖의 어떤 것도 불러오지 않아요.
 - 문서 내용과 임시 저장은 그 PC 안에만 있어요. 브라우저 저장소에 두고, exe는 `WebPad_data` 폴더에 둬요.
 - exe는 윈도우 기본 WebView2를 써요. 주소 평판 확인(SmartScreen)도 꺼서 외부에 알리지 않아요. 소스(`launcher/WebPad.cs`)를 그대로 다시 빌드할 수 있어요.
-- 서명이 없는 exe라 처음 실행할 때 "Windows의 PC 보호" 창이 뜰 수 있어요. 회사 정책으로 exe가 막히면 `webpad.html`을 쓰세요.
 - 브라우저(html/웹)에서는 `C:\`나 사용자 폴더 전체처럼 시스템 파일이 있는 폴더를 브라우저가 열지 못하게 막아요. 그 안의 작업 폴더를 고르세요. exe는 윈도우가 직접 열어서 어디든 열 수 있어요.
 
 ## 기능
@@ -50,7 +62,7 @@ Notepad++를 쓸 수 없는 보안 환경을 위한 가벼운 코드 편집기�
 ```
 node tools\build-single.js  (dist\webpad.html: 글꼴까지 넣은 파일 하나)
 launcher\get-webview2.cmd   (WebView2 SDK 받기, 한 번만)
-launcher\build.cmd          (dist\WebPad.exe 생성)
+launcher\build.cmd          (dist\WebPad.exe 와 배포용 dist\WebPad.zip 생성)
 ```
 
 ## 사용한 것
