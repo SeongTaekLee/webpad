@@ -143,6 +143,7 @@
   .oi .nm{ overflow:hidden; text-overflow:ellipsis; }
   .modal h3 .note{ color:var(--muted); font-weight:400; font-size:12px; }
   #menuTools{ min-width:320px; }
+  #menuJson{ min-width:330px; }
   #menuRecent{ min-width:300px; max-width:560px; }
   #menuRecent button{ display:block; }
   #menuRecent button .sub{ display:block; color:var(--muted); font-size:11px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
@@ -307,12 +308,22 @@
       </div>
     </div>
     <div class="menu-wrap">
-      <button class="tb" data-menu="menuJson">JSON ▾</button>
+      <button class="tb" data-menu="menuJson" title="ABAP · SQL · XML · JSON 자동 포맷">정리 ▾</button>
       <div class="menu" id="menuJson">
-        <button data-cmd="jsonFormat">보기 좋게 정리 <kbd data-key="jsonFormat"></kbd></button>
-        <button data-cmd="jsonMinify">한 줄로 압축 <kbd data-key="jsonMinify"></kbd></button>
-        <button data-cmd="jsonSort">키 이름순 정렬 <kbd data-key="jsonSort"></kbd></button>
-        <button data-cmd="jsonValidate">문법 검사 <kbd data-key="jsonValidate"></kbd></button>
+        <button data-cmd="autoFormat">자동 포맷 (문법에 맞게) <kbd data-key="autoFormat"></kbd></button>
+        <div class="row" style="color:var(--muted);font-size:12px;padding-top:2px;padding-bottom:2px">선택한 부분만, 없으면 문서 전체</div>
+        <hr>
+        <button data-cmd="fmtAbap">ABAP Pretty Printer <kbd data-key="fmtAbap"></kbd></button>
+        <button data-cmd="fmtSql">SQL 정리 (강 정렬) <kbd data-key="fmtSql"></kbd></button>
+        <hr>
+        <button data-cmd="fmtXml">XML 정리 <kbd data-key="fmtXml"></kbd></button>
+        <button data-cmd="xmlMinify">XML 한 줄로 압축</button>
+        <button data-cmd="xmlValidate">XML 검사</button>
+        <hr>
+        <button data-cmd="jsonFormat">JSON 정리 <kbd data-key="jsonFormat"></kbd></button>
+        <button data-cmd="jsonMinify">JSON 한 줄로 압축 <kbd data-key="jsonMinify"></kbd></button>
+        <button data-cmd="jsonSort">JSON 키 이름순 정렬 <kbd data-key="jsonSort"></kbd></button>
+        <button data-cmd="jsonValidate">JSON 검사 <kbd data-key="jsonValidate"></kbd></button>
       </div>
     </div>
     <div class="menu-wrap">
@@ -2357,6 +2368,393 @@ function jsonApply(kind){
   scroller(d).scrollTop=0; requestRender(); updateStatus();
 }
 
+// ================= 자동 포맷 (ABAP · SQL · XML) =================
+// 모두 순수 함수: 글자를 받아 정리한 글자를 돌려준다. 실패하면 { message, pos } 를 던진다.
+
+// ---------- SQL: 강(river) 정렬 ----------
+// SELECT 의 끝(6번째 칸)에 절 키워드의 오른쪽 끝을 맞추고, SELECT 목록은 줄 앞 쉼표로 나눈다.
+var SQL_EXTRA_KW='single corresponding fields appending rows up client specified for endselect package size bypass buffer entries '+
+  'count sum min max avg coalesce cast substring upper lower trim ltrim rtrim length round nvl ifnull decode partition over row_number rank dense_rank '+
+  'natural using exists escape interval date time timestamp char varchar nvarchar integer decimal boolean';
+var SQL_KW=null;
+function kwList(v){ return typeof v==='string' ? v.split(' ') : v && typeof v.forEach==='function' ? Array.from(v) : []; }
+function sqlKw(){ if(!SQL_KW){ SQL_KW=new Set(kwList(LANGS.sql&&LANGS.sql.kw).concat(SQL_EXTRA_KW.split(' ')).filter(Boolean)); } return SQL_KW; }
+// 절(새 줄을 시작하는) 키워드의 첫 단어
+var SQL_CLAUSE={ select:1, from:1, where:1, group:1, order:1, having:1, left:1, right:1, full:1, inner:1, cross:1, join:1, on:1, and:1, or:1,
+  union:1, except:1, intersect:1, insert:1, values:1, update:1, set:1, delete:1, into:1, limit:1, up:1, with:1, 'for':1, returning:1 };
+function sqlTokens(src){
+  var toks=[], i=0, n=src.length, m, wordRe=/^[@:]?[A-Za-z_À-￿][\w$#À-￿]*(?:(?:\.|~|->|-(?=[A-Za-z_]))(?:[A-Za-z_À-￿][\w$#À-￿]*|\*))*/;
+  while(i<n){
+    var c=src[i];
+    if(c==='\n'){ toks.push({ t:'nl', p:i }); i++; continue; }
+    if(c===' '||c==='\t'||c==='\r'){ i++; continue; }
+    if(c==='-' && src[i+1]==='-'){ var e=src.indexOf('\n', i); if(e<0) e=n; toks.push({ t:'lc', v:src.slice(i,e).replace(/\s+$/,''), p:i }); i=e; continue; }
+    if(c==='/' && src[i+1]==='*'){ var e2=src.indexOf('*/', i+2); e2=e2<0?n:e2+2; toks.push({ t:'bc', v:src.slice(i,e2), p:i }); i=e2; continue; }
+    if(c==="'" || c==='"' || c==='`'){
+      var j=i+1; while(j<n){ if(src[j]===c){ if(src[j+1]===c){ j+=2; continue; } break; } if(src[j]==='\n') break; j++; }
+      toks.push({ t:'s', v:src.slice(i, j+1), p:i }); i=j+1; continue;
+    }
+    if((m=/^\d+(?:\.\d+)?/.exec(src.slice(i, i+64)))){ toks.push({ t:'n', v:m[0], p:i }); i+=m[0].length; continue; }
+    if((m=wordRe.exec(src.slice(i, i+512)))){ toks.push({ t:'w', v:m[0], p:i }); i+=m[0].length; continue; }
+    if((m=/^(?:<>|<=|>=|!=|\|\||:=|=>|->)/.exec(src.slice(i, i+2)))){ toks.push({ t:'o', v:m[0], p:i }); i+=m[0].length; continue; }
+    toks.push({ t:'o', v:c, p:i }); i++;
+  }
+  return toks;
+}
+var SQL_SP_PAREN={ 'in':1, 'on':1, 'and':1, 'or':1, 'not':1, 'exists':1, 'values':1, 'select':1, 'from':1, 'where':1, 'then':1, 'else':1, 'when':1, 'as':1, 'by':1, 'join':1, 'set':1, 'having':1, 'union':1, 'all':1, 'is':1, 'like':1, 'between':1, 'into':1, 'distinct':1, 'case':1, 'over':1, 'any':1, 'some':1, 'using':1, 'with':1 };
+function sqlWordText(w, keepCase){
+  if(keepCase) return w;
+  if(w[0]==='@' || w[0]===':') return sqlIsKw(w.slice(1)) ? w[0]+w.slice(1).toUpperCase() : w;
+  return w.toUpperCase();
+}
+function sqlIsKw(w){ return sqlKw().has(w.toLowerCase()); }
+// 절 키워드 묶음(LEFT OUTER JOIN, GROUP BY, UNION ALL, INSERT INTO, UP TO ... ) 을 i 위치에서 읽어 단어 수를 돌려준다
+function sqlClauseLen(toks, i){
+  var w=function(k){ var t=toks[i+k]; return t && t.t==='w' ? t.v.toLowerCase() : ''; }, a=w(0), b=w(1), c=w(2);
+  if(a==='left'||a==='right'||a==='full'){ if(b==='outer'&&c==='join') return 3; if(b==='join') return 2; return 0; }
+  if(a==='inner'||a==='cross'||a==='natural'){ return b==='join'?2:0; }
+  if(a==='group'||a==='order'||a==='partition'){ return b==='by'?2:0; }
+  if(a==='union'||a==='except'||a==='intersect'){ return b==='all'?2:1; }
+  if(a==='insert'){ return b==='into'?2:1; }
+  if(a==='delete'){ return b==='from'?2:1; }
+  if(a==='up'){ return b==='to'?2:0; }
+  if(a==='for'){ return (b==='all'&&c==='entries')?3:0; }
+  if(a==='select'){ return (b==='distinct'||b==='single')?2:1; }
+  return SQL_CLAUSE[a]?1:0;
+}
+function sqlFormat(src){
+  var toks=sqlTokens(src), RIVER=6;
+  function fmt(s, e){
+    var lines=[], cur='', com=null, ctx='', depth=0, caseDepth=0, between=false, prev=null, prevNl=false, needNl=false, host=0;
+    function flush(){ if(cur.trim()!=='' || com!==null) lines.push({ t:cur.replace(/\s+$/,''), c:com }); cur=''; com=null; }
+    function cont(){ return ' '.repeat(RIVER+1); }
+    function put(text, tok){
+      if(needNl){ flush(); cur=cont(); needNl=false; }
+      if(cur.trim()===''){ cur+=text; prev=tok; return; }
+      var last=cur[cur.length-1], noSp=text===','||text===')'||text==='.'||text===';'||last==='('||last==='.'||last===' '||
+        (text==='(' && prev && prev.t==='w' && !SQL_SP_PAREN[prev.v.toLowerCase().replace(/^[@:]/,'')]);
+      cur+=(noSp?'':' ')+text; prev=tok;
+    }
+    for(var i=s;i<e;i++){
+      var tk=toks[i];
+      if(tk.t==='nl'){ prevNl=true; continue; }
+      var wasNl=prevNl; prevNl=false;
+      if(tk.t==='lc'){
+        if(cur.trim()===',' && lines.length){ var pl=lines[lines.length-1]; pl.c=pl.c?pl.c+' '+tk.v:tk.v; continue; }
+        if(wasNl && cur.trim()!==''){ flush(); lines.push({ t:cont()+tk.v, c:null }); }
+        else if(cur.trim()===''){ lines.push({ t:(lines.length?cont():'')+tk.v, c:null }); cur=''; }
+        else { com=tk.v; needNl=true; }
+        continue;
+      }
+      if(tk.t==='bc'){ put(tk.v, tk); continue; }
+      if(tk.t==='s' || tk.t==='n'){ put(tk.v, tk); if(tk.t==='n' && prev) {} continue; }
+      if(tk.t==='o'){
+        var v=tk.v;
+        if(v==='('){
+          // 괄호 안이 SELECT 면 하위 질의: 따로 정리해서 괄호 위치에 맞춰 붙인다
+          var k=i+1; while(k<e && (toks[k].t==='nl' || toks[k].t==='lc' || toks[k].t==='bc')) k++;
+          if(k<e && toks[k].t==='w' && /^(select|with)$/i.test(toks[k].v)){
+            var dd=1, j=i+1; for(; j<e; j++){ if(toks[j].t==='o'){ if(toks[j].v==='(') dd++; else if(toks[j].v===')' && --dd===0) break; } }
+            put('(', tk); var col=cur.length;
+            var inner=fmt(i+1, j);
+            if(inner.length){
+              cur+=inner[0].t; com=inner[0].c;
+              for(var q=1;q<inner.length;q++){ flush(); cur=' '.repeat(col)+inner[q].t; com=inner[q].c; }
+            }
+            cur+=')'; prev={ t:'o', v:')' }; i=j; continue;
+          }
+          depth++; if(prev && prev.t==='w' && prev.v[0]==='@') host++;
+          put(v, tk); continue;
+        }
+        if(v===')'){ if(depth>0) depth--; if(host>0 && depth<host) host=depth; put(v, tk); continue; }
+        if(v===','){
+          if(depth===0 && caseDepth===0 && (ctx==='select' || ctx==='set')){ flush(); cur=' '.repeat(RIVER-1)+','; prev=tk; continue; }
+          put(v, tk); continue;
+        }
+        if(v===';' || (v==='.' && depth===0)){ put(v, tk); flush(); lines.push({ t:'', c:null }); ctx=''; continue; }
+        put(v, tk); continue;
+      }
+      // 단어
+      var lw=tk.v.toLowerCase();
+      if(depth===0 && caseDepth===0){
+        var cl=sqlClauseLen(toks, i);
+        if(cl && !(lw==='and' && between) && !(lw==='set' && ctx!=='update') && !(lw==='on' && ctx!=='join' && ctx!=='on' && ctx!=='and')){
+          var words=[]; for(var w=0;w<cl;w++) words.push(toks[i+w].v.toUpperCase());
+          flush(); needNl=false;
+          cur=' '.repeat(Math.max(0, RIVER-words[0].length))+words.join(' ');
+          prev=toks[i+cl-1]; i+=cl-1;
+          ctx=lw==='select'?'select':lw==='set'?'set':lw==='update'?'update':/join$/.test(words[words.length-1].toLowerCase())?'join':lw;
+          if(lw==='select' || lw==='insert' || lw==='update' || lw==='delete' || lw==='with' || lw==='union' || lw==='except' || lw==='intersect') between=false;
+          continue;
+        }
+      }
+      if(lw==='between') between=true; else if(lw==='and') between=false;
+      if(lw==='case') caseDepth++; else if(lw==='end' && caseDepth>0) caseDepth--;
+      put(sqlWordText(tk.v, host>0), tk);
+    }
+    flush();
+    while(lines.length && lines[lines.length-1].t==='' && lines[lines.length-1].c===null) lines.pop();
+    return lines;
+  }
+  var out=fmt(0, toks.length);
+  // 줄 끝 주석을 이어지는 줄끼리 같은 칸에 맞춘다
+  var i0=0;
+  while(i0<out.length){
+    if(out[i0].c===null){ i0++; continue; }
+    var i1=i0; while(i1<out.length && out[i1].c!==null) i1++;
+    var mx=0; for(var k2=i0;k2<i1;k2++) mx=Math.max(mx, dispWidth(out[k2].t));
+    for(var k3=i0;k3<i1;k3++) out[k3].t=out[k3].t+' '.repeat(mx-dispWidth(out[k3].t)+2)+out[k3].c;
+    i0=i1;
+  }
+  return out.map(function(l){ return l.c!==null && l.t.indexOf(l.c)<0 ? l.t+'  '+l.c : l.t; }).join('\n');
+}
+function dispWidth(s){ var w=0; for(var i=0;i<s.length;i++) w+=isWideCode(s.charCodeAt(i))?2:1; return w; }
+
+// ---------- XML ----------
+function xmlTokens(src){
+  var toks=[], i=0, n=src.length;
+  while(i<n){
+    var lt=src.indexOf('<', i);
+    if(lt<0){ toks.push({ t:'text', v:src.slice(i), p:i }); break; }
+    if(lt>i) toks.push({ t:'text', v:src.slice(i, lt), p:i });
+    var end, kind;
+    if(src.startsWith('<!--', lt)){ end=src.indexOf('-->', lt+4); if(end<0) throw { message:'주석이 닫히지 않았어요 (-->)', pos:lt }; end+=3; kind='comment'; }
+    else if(src.startsWith('<![CDATA[', lt)){ end=src.indexOf(']]>', lt+9); if(end<0) throw { message:'CDATA가 닫히지 않았어요 (]]>)', pos:lt }; end+=3; kind='cdata'; }
+    else if(src.startsWith('<?', lt)){ end=src.indexOf('?>', lt+2); if(end<0) throw { message:'처리 지시문이 닫히지 않았어요 (?>)', pos:lt }; end+=2; kind='pi'; }
+    else if(src.startsWith('<!', lt)){ end=src.indexOf('>', lt+2); if(end<0) throw { message:'선언이 닫히지 않았어요 (>)', pos:lt }; end+=1; kind='decl'; }
+    else{
+      var j=lt+1, q=null;
+      while(j<n){ var c=src[j]; if(q){ if(c===q) q=null; } else if(c==='"'||c==="'") q=c; else if(c==='>') break; else if(c==='<') throw { message:'태그 안에 < 가 있어요', pos:j }; j++; }
+      if(j>=n) throw { message:'태그가 닫히지 않았어요 (>)', pos:lt };
+      end=j+1; var raw=src.slice(lt, end), m=/^<\/?\s*([^\s\/>]+)/.exec(raw);
+      if(!m) throw { message:'태그 이름이 없어요', pos:lt };
+      kind=raw[1]==='/'?'close':/\/\s*>$/.test(raw)?'self':'open';
+      toks.push({ t:kind, v:raw.replace(/\s+/g,' ').replace(/ >$/,'>').replace(/ \/>$/,'/>'), name:m[1], p:lt }); i=end; continue;
+    }
+    toks.push({ t:kind, v:src.slice(lt, end), p:lt }); i=end;
+  }
+  return toks;
+}
+function xmlFormat(src, ind){
+  var toks=xmlTokens(src), out=[], stack=[], pre=0;
+  function pad(){ return ind.repeat(stack.length); }
+  for(var i=0;i<toks.length;i++){
+    var tk=toks[i];
+    if(tk.t==='text'){ var tx=tk.v.trim(); if(tx) out.push(pad()+tx.replace(/\s*\n\s*/g, '\n'+pad())); continue; }
+    if(tk.t==='open'){
+      var nx=toks[i+1], nx2=toks[i+2];
+      if(nx && nx.t==='close' && nx.name===tk.name){ out.push(pad()+tk.v+nx.v); i++; continue; }
+      if(nx && nx.t==='text' && nx2 && nx2.t==='close' && nx2.name===tk.name && nx.v.indexOf('\n')<0 || (nx && nx.t==='text' && nx2 && nx2.t==='close' && nx2.name===tk.name && nx.v.trim().indexOf('\n')<0)){
+        out.push(pad()+tk.v+nx.v.trim()+nx2.v); i+=2; continue;
+      }
+      out.push(pad()+tk.v); stack.push(tk); continue;
+    }
+    if(tk.t==='close'){
+      if(!stack.length) throw { message:'여는 태그 없이 </'+tk.name+'> 가 나왔어요', pos:tk.p };
+      var top=stack.pop();
+      if(top.name!==tk.name) throw { message:'<'+top.name+'> 가 닫히기 전에 </'+tk.name+'> 가 나왔어요', pos:tk.p };
+      out.push(pad()+tk.v); continue;
+    }
+    if(tk.t==='comment'){ out.push(pad()+tk.v.trim().split('\n').map(function(l, k){ return k?pad()+l.trim():l; }).join('\n')); continue; }
+    out.push(pad()+tk.v.trim());
+  }
+  if(stack.length) throw { message:'<'+stack[stack.length-1].name+'> 가 닫히지 않았어요', pos:stack[stack.length-1].p };
+  return out.join('\n');
+}
+function xmlMinifyText(src){
+  var toks=xmlTokens(src), out=[], stack=[];
+  toks.forEach(function(tk){
+    if(tk.t==='text'){ var tx=tk.v.trim(); if(tx) out.push(tx.replace(/\s*\n\s*/g,' ')); return; }
+    if(tk.t==='open') stack.push(tk);
+    if(tk.t==='close'){ if(!stack.length) throw { message:'여는 태그 없이 </'+tk.name+'> 가 나왔어요', pos:tk.p }; var top=stack.pop(); if(top.name!==tk.name) throw { message:'<'+top.name+'> 가 닫히기 전에 </'+tk.name+'> 가 나왔어요', pos:tk.p }; }
+    out.push(tk.t==='comment'||tk.t==='cdata'?tk.v:tk.v.trim());
+  });
+  if(stack.length) throw { message:'<'+stack[stack.length-1].name+'> 가 닫히지 않았어요', pos:stack[stack.length-1].p };
+  return out.join('');
+}
+
+// ---------- ABAP Pretty Printer ----------
+// SE38 의 Pretty Printer 처럼: 블록마다 2칸 들여쓰기, 키워드는 대문자, 나머지는 소문자.
+// 문장의 둘째 줄부터(이어지는 줄)는 첫 줄이 움직인 만큼만 같이 움직여서 SELECT 목록 같은 정렬을 깨지 않는다.
+var ABAP_KW=null;
+function abapKw(){
+  if(!ABAP_KW){ ABAP_KW=new Set(kwList(LANGS.abap.kw).join(' ').concat(' space eq ne lt gt le ge co cn ca na cs ns cp np bt nb and or not is initial bound assigned supplied requested '+
+    'endat endon endcatch endexec endenhancement end-of-definition endprovide end-test-seam end-test-injection test-seam test-injection enhancement enhancement-section end-enhancement-section enhancement-point '+
+    'top-of-page end-of-page load-of-program at line-selection user-command pf-status titlebar message-id line-size line-count no-standard-page-heading '+
+    'public protected private section interfaces inheriting friends abstract final create global local deferred load redefinition default ignore for testing risk level harmless duration short '+
+    'importing exporting changing returning raising exceptions preferred parameter optional read-only lower upper case cond switch conv cast exact reduce filter new value base ref let in next '+
+    'then else when others endcase line_exists line_index boolc xsdbool strlen xstrlen condense translate concatenate split find replace shift search overlay '+
+    'provide endprovide module endmodule output input chain endchain field on request chain-request chain-input').split(' ').filter(Boolean)); }
+  return ABAP_KW;
+}
+var ABAP_OPEN={ 'if':1, 'case':1, 'loop':1, 'do':1, 'while':1, 'form':1, 'function':1, 'method':1, 'try':1, 'module':1, 'provide':1, 'define':1, 'exec':1,
+  'enhancement':1, 'enhancement-section':1, 'test-seam':1, 'test-injection':1, 'on':1 };
+var ABAP_CLOSE={ endif:'if', endcase:'case', endloop:'loop', enddo:'do', endwhile:'while', endform:'form', endfunction:'function', endmethod:'method', endclass:'class',
+  endinterface:'interface', endtry:'try', endmodule:'module', endprovide:'provide', endselect:'select', endat:'at', 'end-of-definition':'define', endexec:'exec',
+  endenhancement:'enhancement', 'end-enhancement-section':'enhancement-section', 'end-test-seam':'test-seam', 'end-test-injection':'test-injection', endon:'on', endcatch:'catch-sys' };
+var ABAP_MID={ elseif:'if', 'else':'if', 'catch':'try', cleanup:'try', 'when':'case' };
+var ABAP_TOP={ report:1, program:1, 'function-pool':1, 'class-pool':1, 'interface-pool':1, 'type-pool':1, 'start-of-selection':1, 'end-of-selection':1, initialization:1,
+  'top-of-page':1, 'end-of-page':1, 'load-of-program':1, 'get':1 };
+// 줄을 훑어 문장 경계와 주석·문자열 위치를 찾는다. 돌려주는 값: 줄마다 { kind:'blank'|'star'|'comment'|'code', stmtStart:bool, code:문장 첫 줄이면 문장 전체(주석·문자열 제외) }
+function abapScan(lines){
+  var info=[], inStmt=false, stmt=null, q=null, exec=false;
+  for(var li=0; li<lines.length; li++){
+    var L=lines[li], t=L.replace(/\s+$/,'');
+    if(t===''){ info.push({ kind:'blank' }); continue; }
+    if(L[0]==='*'){ info.push({ kind:'star' }); continue; }
+    var rec={ kind:'code', stmtStart:false, cont:inStmt }, i=0, n=t.length, code='';
+    while(i<n && (t[i]===' '||t[i]==='\t')) i++;
+    if(t[i]==='"'){ info.push({ kind:'comment' }); continue; }
+    for(; i<n; i++){
+      var c=t[i];
+      if(q){ if(c===q){ if(q==="'" && t[i+1]==="'"){ i++; continue; } if(q==='|' && t[i-1]==='\\') continue; q=null; } continue; }
+      if(c==='"') break;
+      if(c==="'"||c==='`'||c==='|'){ q=c; code+=' '; continue; }
+      if(!inStmt && c!==' ' && c!=='\t'){ inStmt=true; rec.stmtStart=true; stmt={ text:'', line:li, lines:[] }; rec.stmt=stmt; }
+      if(inStmt){ code+=c; if(c==='.' && !(/[\w]/.test(t[i-1]||' ') && /\d/.test(t[i+1]||' '))){ stmt.text+=code; code=''; inStmt=false; stmt=null; } }
+    }
+    q=null;
+    if(stmt){ stmt.text+=code+' '; }
+    info.push(rec);
+  }
+  return info;
+}
+function abapFormat(src, onlyLines){
+  var lines=src.split('\n'), info=abapScan(lines), IND='  ', stack=[], out=[], kw=abapKw();
+  // SELECT ... ENDSELECT 짝 찾기: ENDSELECT 가 있는 SELECT 만 블록으로 본다
+  var pend=[];
+  info.forEach(function(r){ if(r.kind==='code' && r.stmtStart){ var f=firstWord(r.stmt.text); if(f==='select') pend.push(r.stmt); else if(f==='endselect' && pend.length) pend.pop().loop=true; else if(f==='endselect'){} } });
+  function firstWord(s){ var m=/^\s*([A-Za-z][\w-]*)/.exec(s); return m?m[1].toLowerCase():''; }
+  function secondWord(s){ var m=/^\s*[A-Za-z][\w-]*[\s:]+([A-Za-z][\w-]*)/.exec(s); return m?m[1].toLowerCase():''; }
+  function level(){ return stack.length; }
+  function popTo(type){ var k=stack.lastIndexOf(type); if(k>=0) stack.length=k; }
+  var delta=0, execSql=false, i, cs={};
+  for(i=0;i<lines.length;i++){
+    var r=info[i], L=lines[i], t=L.replace(/\s+$/,'');
+    if(r.kind==='blank'){ out.push(''); continue; }
+    if(r.kind==='star'){ out.push(t); continue; }
+    var curInd=/^[ \t]*/.exec(t)[0].replace(/\t/g, '    ').length, body=t.replace(/^[ \t]+/, '');
+    if(r.kind==='comment'){ out.push(IND.repeat(level())+abapCase(body, kw, execSql)); continue; }
+    if(!r.stmtStart){ // 이어지는 줄: 첫 줄이 움직인 만큼
+      var ni=Math.max(0, curInd+delta);
+      out.push(' '.repeat(ni)+(execSql?body:abapCase(body, kw, execSql, cs)));
+      continue;
+    }
+    var st=r.stmt, f=firstWord(st.text), s2=secondWord(st.text), lvl;
+    if(f==='endexec') execSql=false;
+    if(ABAP_TOP[f] || f==='form' || f==='function' || f==='class' && (s2 && /\b(definition|implementation)\b/i.test(st.text) && !/\b(deferred|load|local\s+friends)\b/i.test(st.text)) || f==='interface' && !/\bdeferred\b/i.test(st.text) && s2!=='' || f==='at' && /^(selection-screen|line-selection|user-command|pf\d+)$/.test(s2)){
+      stack.length=0;
+    }
+    if(ABAP_CLOSE[f]){ popTo(ABAP_CLOSE[f]==='class'?'class':ABAP_CLOSE[f]); lvl=level(); if(f==='endclass'){ } }
+    else if(ABAP_MID[f] && (f!=='when' || stack.indexOf('case')>=0)){
+      var want=ABAP_MID[f]; if(f==='when'){ popTo('when'); var kc=stack.lastIndexOf('case'); if(kc>=0) stack.length=kc+1; lvl=level(); stack.push('when'); }
+      else { var kk=stack.lastIndexOf(want); if(kk>=0) stack.length=kk+1; lvl=level()-1; }
+      if(lvl<0) lvl=0;
+    }
+    else if(f==='public'||f==='protected'||f==='private'){ popTo('section'); var kc2=stack.lastIndexOf('class'); if(kc2>=0) stack.length=kc2+1; lvl=level(); stack.push('section'); }
+    else{
+      lvl=level();
+      var open=null;
+      if(f==='class' && /\b(definition|implementation)\b/i.test(st.text) && !/\b(deferred|load|local\s+friends)\b/i.test(st.text)) open='class';
+      else if(f==='interface' && s2 && !/\bdeferred\b/i.test(st.text)) open='interface';
+      else if(f==='select' && st.loop) open='select';
+      else if(f==='at' && /^(new|end|first|last)$/.test(s2)) open='at';
+      else if(f==='catch' && s2==='system-exceptions') open='catch-sys';
+      else if(f==='on' && s2==='change') open='on';
+      else if(f==='class' || f==='interface' || f==='select' || f==='at' || f==='on') open=null;
+      else if(ABAP_OPEN[f]){ open=f; if(f==='exec') execSql=true; if(f==='module' && !/\b(output|input)\s*\.\s*$/i.test(st.text) && !/\bmodule\s+\S+\s*\.\s*$/i.test(st.text)) open=null; }
+      if(open){ stack.push(open); }
+    }
+    if(ABAP_TOP[f] && f!=='report' && f!=='program' && !/-pool$/.test(f)) stack.push('event');
+    if(f==='at' && /^(selection-screen|line-selection|user-command|pf\d+)$/.test(s2)) stack.push('event');
+    var ni2=lvl*IND.length;
+    delta=ni2-curInd;
+    cs={}; out.push(' '.repeat(ni2)+(execSql && f!=='exec'?body:abapCase(body, kw, false, cs)));
+  }
+  if(onlyLines) return out;
+  return out.join('\n');
+}
+// 한 줄의 코드 부분만 대소문자 정리 (문자열·주석은 그대로)
+var ABAP_NAME_AFTER={ method:1, methods:1, 'class-methods':1, form:1, perform:1, 'function':1, 'class':1, 'interface':1, endmethod:1, endform:1, 'module':1, endmodule:1, define:1, data:1, 'class-data':1, types:1, constants:1, statics:1, 'field-symbols':1, parameters:1, 'select-options':1, tables:1, ranges:1, 'type-pools':1, include:1, 'interfaces':1, aliases:1, events:1, 'class-events':1, 'report':1, 'program':1, 'function-pool':1 };
+var ABAP_DECL={ data:1, 'class-data':1, types:1, constants:1, statics:1, 'field-symbols':1, parameters:1, 'select-options':1, tables:1, ranges:1, methods:1, 'class-methods':1, 'interfaces':1, aliases:1, events:1 };
+// st: 문장이 여러 줄일 때 이어지는 상태 { decl, expectName }
+function abapCase(line, kw, raw, st){
+  if(raw) return line;
+  st=st||{}; var out='', i=0, n=line.length, q=null, expectName=!!st.expectName, decl=!!st.decl;
+  while(i<n){
+    var c=line[i];
+    if(q){ out+=c; if(c===q){ if(q==="'" && line[i+1]==="'"){ out+=line[i+1]; i+=2; continue; } q=null; } i++; continue; }
+    if(c==='"'){ out+=line.slice(i); break; }
+    if(c==="'"||c==='`'||c==='|'){ q=c; out+=c; i++; continue; }
+    var m=/^[A-Za-z_\/][\w\/]*(?:-[A-Za-z_]\w*)*/.exec(line.slice(i));
+    if(m){
+      var w=m[0], lw=w.toLowerCase(), before=out.slice(-2), after=line[i+w.length]||'';
+      var fieldish=/-$|~$|->|=>/.test(before) || /[>~]$/.test(before);
+      var isKw=!fieldish && !expectName && (kw.has(lw) || (/-/.test(lw) && kw.has(lw.split('-')[0]) && kw.has(lw.split('-').slice(1).join('-'))));
+      if(isKw && after==='(' && /->|=>/.test(before)) isKw=false;
+      // 다음 단어가 이름인 자리: METHOD x / FORM x / DATA x / 선언 체인의 쉼표 뒤
+      expectName=!!ABAP_NAME_AFTER[lw] && isKw;
+      if(ABAP_DECL[lw] && isKw) decl=true;
+      out+=isKw?w.toUpperCase():lw; i+=w.length; continue;
+    }
+    if(c===':' && decl) expectName=true;
+    else if(c===',' && decl) expectName=true;
+    else if(c==='.' ) { decl=false; expectName=false; }
+    else if(c!==' ' && c!=='	') expectName=false;
+    out+=c; i++;
+  }
+  st.decl=decl; st.expectName=expectName;
+  return out;
+}
+
+// 포맷 적용: 선택이 있으면 선택한 부분(ABAP 은 줄 단위)만, 없으면 문서 전체
+function applyFormat(d, kind){
+  if(!d) return;
+  if(d.grid) toggleGrid();
+  exitCol(d);
+  var a=sA(d), b=sB(d), whole=a===b, s, e, text, out, ind=settings.spaces?' '.repeat(settings.tab):'  ';
+  try{
+    if(kind==='abap'){
+      // 문서 전체를 정리해서 선택한 줄들만 바꿔 넣는다 (앞쪽 블록 깊이를 알아야 하므로)
+      var all=abapFormat(d.text, true);
+      if(whole){ s=0; e=d.text.length; out=all.join('\n'); }
+      else{
+        var r=lineBlock(d), l0=lineOf(d.ls, r.s), l1=lineOf(d.ls, Math.max(r.s, r.e-1));
+        s=r.s; e=r.e; out=all.slice(l0, l1+1).join('\n');
+      }
+    }else{
+      s=whole?0:a; e=whole?d.text.length:b; text=d.text.slice(s,e);
+      if(!text.trim()) return toast('정리할 내용이 없어요');
+      out=kind==='sql'?sqlFormat(text):kind==='xml'?xmlFormat(text, ind):kind==='xmlmin'?xmlMinifyText(text):kind==='xmlcheck'?(xmlFormat(text, ind), null):text;
+      if(kind==='xmlcheck') return toast('올바른 XML이에요 ✓');
+    }
+  }catch(err){
+    var msg=err && err.message || String(err);
+    if(err && err.pos!=null){ var p=s+err.pos; setSel(d, p, p); revealPos(d, p); requestRender(); updateStatus(); }
+    return toast('정리하지 못했어요: '+msg, true);
+  }
+  if(out===d.text.slice(s,e)) return toast('이미 정리된 상태예요');
+  var sc=getScroll(d);
+  if(whole) setAllText(d, out, Math.min(a, out.length)); else edit(d, s, e, out, s, s+out.length);
+  setScroll(d, sc); requestRender(); updateStatus();
+  toast({ abap:'ABAP', sql:'SQL', xml:'XML', xmlmin:'XML' }[kind]+(kind==='xmlmin'?'을 한 줄로 압축했어요':'을 정리했어요')+(whole?'':' (선택한 부분)'));
+}
+function autoFormat(){
+  var d=active; if(!d) return;
+  var l=d.lang;
+  if(l==='abap') return applyFormat(d, 'abap');
+  if(l==='sql') return applyFormat(d, 'sql');
+  if(l==='json') return jsonApply('format');
+  if(l==='html'){ var t=d.text.trimStart(); return /^<\?xml|^<[A-Za-z]/.test(t) && !/^<!doctype html|^<html/i.test(t) ? applyFormat(d, 'xml') : toast('HTML 은 자동 포맷을 지원하지 않아요 (XML 만)'); }
+  // 문법을 안 골랐으면 내용으로 짐작
+  var head=d.text.slice(0, 2000);
+  if(/^\s*<\?xml|^\s*<[A-Za-z][\w:-]*[\s>]/.test(head)) return applyFormat(d, 'xml');
+  if(/^\s*[\[{]/.test(head)) return jsonApply('format');
+  if(/^\s*(select|insert|update|delete|with|merge)\b/i.test(head) && !/\bendselect\b|\.\s*$/im.test(head)) return applyFormat(d, 'sql');
+  if(/^\s*(report|program|function|class|method|form|data|types|start-of-selection|\*)/im.test(head)) return applyFormat(d, 'abap');
+  toast('자동 포맷은 ABAP, SQL, XML, JSON 에서 돼요. 상태 표시줄에서 문법을 고르거나 정리 메뉴에서 직접 고르세요');
+}
+
 // ================= CSV 표 편집 =================
 function parseCsv(text, del){
   var rows=[], row=[], f='', i=0, n=text.length, inq=false;
@@ -3279,6 +3677,9 @@ var CMDS={
   find:function(){ openFind(false); }, replace:function(){ openFind(true); },
   findNext:function(){ findStep(1); }, findPrev:function(){ findStep(-1); }, closeFind:closeFind,
   replaceOne:replaceOne, replaceAll:replaceAll, gotoLine:gotoLine,
+  autoFormat:autoFormat,
+  fmtAbap:function(){ applyFormat(active, 'abap'); }, fmtSql:function(){ applyFormat(active, 'sql'); },
+  fmtXml:function(){ applyFormat(active, 'xml'); }, xmlMinify:function(){ applyFormat(active, 'xmlmin'); }, xmlValidate:function(){ applyFormat(active, 'xmlcheck'); },
   jsonFormat:function(){ jsonApply('format'); }, jsonMinify:function(){ jsonApply('minify'); },
   jsonSort:function(){ jsonApply('sort'); }, jsonValidate:function(){ jsonApply('validate'); },
   toggleGrid:toggleGrid,
@@ -3332,6 +3733,7 @@ var KEYMAP=[
   ['h','비교'],
   ['compare','두 탭 비교','Ctrl+Alt+C'], ['closeCompare','비교 닫기','Ctrl+Alt+X'], ['nextDiff','다음 차이','F7'], ['prevDiff','이전 차이','Shift+F7'],
   ['h','도구'],
+  ['autoFormat','자동 포맷 (문법에 맞게)','Ctrl+Alt+Shift+F'], ['fmtAbap','ABAP Pretty Printer',''], ['fmtSql','SQL 정리',''], ['fmtXml','XML 정리','Ctrl+Alt+Shift+B'],
   ['jsonFormat','JSON 정리','Ctrl+Alt+Shift+M'], ['jsonMinify','JSON 압축',''], ['jsonSort','JSON 키 정렬',''], ['jsonValidate','JSON 검사',''],
   ['toggleGrid','CSV 표 편집',''],
   ['fontUp','글꼴 크게',['Ctrl+Num+','Ctrl+=']], ['fontDown','글꼴 작게',['Ctrl+Num-','Ctrl+-']], ['fontReset','글꼴 기본 크기',['Ctrl+Num/','Ctrl+0']],
@@ -3379,6 +3781,7 @@ function renderKeys(){
     '열어 둔 파일을 다른 프로그램이 고치면 자동으로 다시 불러와요. 편집 중이던 탭이면 어떻게 할지 물어봐요.<br>'+
     'ABAP에서는 IF·LOOP·FORM·METHOD 같은 줄에서 Ctrl+B를 누르면 짝이 되는 END 줄로 가요.<br>'+
     '자동 완성은 Ctrl+Space를 눌렀을 때만 나와요 (문서에 있는 단어와 문법 키워드). 열 편집(Alt+C)은 블록이나 여러 줄을 선택한 뒤 숫자·글자를 모든 줄의 같은 칸에 넣어요.<br>'+
+    '자동 포맷(Ctrl+Alt+Shift+F)은 문법에 맞춰 ABAP(Pretty Printer: 블록 들여쓰기·키워드 대문자), SQL(강 정렬: SELECT 끝에 절 키워드를 맞추고 열마다 줄 앞 쉼표), XML, JSON 을 정리해요. 선택한 부분만 정리할 수도 있어요.<br>'+
     '공백 삭제·대소문자·정렬·변환은 선택한 부분에만 적용돼요. 블록(Alt+드래그)을 잡으면 각 줄의 그 칸에만, 선택이 없으면 문서 전체에 적용돼요.</div>');
   box.innerHTML=html.join('');
 }
@@ -3504,7 +3907,7 @@ function openEditCtx(e, d){
   if(d.grid) return;
   var scope=d.col?'블록(세로 선택)의 각 줄에 적용':(d.vsel || sA(d)!==sB(d))?'선택한 부분에만 적용':'선택이 없어 문서 전체에 적용';
   var html=[ctxItem('ctxCut','잘라내기','Ctrl+X'), ctxItem('ctxCopy','복사','Ctrl+C'), ctxItem('ctxPaste','붙여넣기','Ctrl+V'), ctxItem('selectAll','모두 선택','Ctrl+A'), '<hr>',
-    ctxItem('dupLine','줄 복제'), ctxItem('delLine','줄 삭제'), ctxItem('toggleComment','주석 켜기/끄기'), '<hr>',
+    ctxItem('dupLine','줄 복제'), ctxItem('delLine','줄 삭제'), ctxItem('toggleComment','주석 켜기/끄기'), ctxItem('autoFormat','자동 포맷 (ABAP·SQL·XML·JSON)'), '<hr>',
     '<div class="cap">'+scope+'</div>',
     ctxItem('trimLeading','시작 공백 삭제'), ctxItem('trimTrailing','끝 공백 삭제'), ctxItem('trimBoth','시작과 끝 공백 삭제'),
     ctxItem('upper','대문자로'), ctxItem('lower','소문자로'),
