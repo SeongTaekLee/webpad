@@ -1,0 +1,59 @@
+# 웹패드 빌드 (GitHub Actions)
+# - main 푸시·태그 푸시·수동 실행 때 dist\WebPad.exe, dist\WebPad.zip, dist\webpad.html 을 만든다.
+# - 윈도우 러너에 기본으로 있는 .NET Framework csc 로 exe 를 만들므로 별도 SDK 설치가 없다 (build.cmd 와 동일).
+# - 태그(v*) 푸시면 그 태그의 릴리스에 zip·html 을 올린다 (이미 있으면 덮어쓴다).
+# - 코드 서명(SignPath)은 이 워크플로의 exe 산출물을 받아 서명하는 단계로 뒤에 붙인다.
+name: build
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: WebView2 SDK 받기
+        shell: cmd
+        run: launcher\get-webview2.cmd
+
+      - name: exe + zip 빌드
+        shell: cmd
+        run: launcher\build.cmd
+
+      - name: 파일 하나짜리 webpad.html 빌드
+        run: node tools/build-single.js
+
+      - name: 산출물 확인
+        shell: pwsh
+        run: |
+          Get-ChildItem dist | Format-Table Name, Length
+          (Get-Item dist/WebPad.exe).VersionInfo.FileVersion
+          if (-not (Test-Path dist/WebPad.zip)) { throw "WebPad.zip 이 없어요" }
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: webpad-${{ github.sha }}
+          path: |
+            dist/WebPad.exe
+            dist/WebPad.zip
+            dist/webpad.html
+          if-no-files-found: error
+
+      - name: 릴리스에 올리기 (태그 푸시일 때)
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $tag = "${{ github.ref_name }}"
+          gh release view $tag 2>$null
+          if ($LASTEXITCODE -ne 0) { gh release create $tag --title $tag.TrimStart('v') --generate-notes }
+          gh release upload $tag dist/WebPad.zip dist/webpad.html --clobber
