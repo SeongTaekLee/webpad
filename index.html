@@ -2468,7 +2468,7 @@ function sqlFormat(src){
         }
         if(v===')'){ if(depth>0) depth--; if(host>0 && depth<host) host=depth; put(v, tk); continue; }
         if(v===','){
-          if(depth===0 && caseDepth===0 && (ctx==='select' || ctx==='set')){ flush(); cur=' '.repeat(RIVER-1)+','; prev=tk; continue; }
+          if(depth===0 && caseDepth===0 && (ctx==='select' || ctx==='set')){ flush(); needNl=false; cur=' '.repeat(RIVER-1)+','; prev=tk; continue; }
           put(v, tk); continue;
         }
         if(v===';' || (v==='.' && depth===0)){ put(v, tk); flush(); lines.push({ t:'', c:null }); ctx=''; continue; }
