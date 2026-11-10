@@ -131,7 +131,11 @@
 
   #editorHost{ flex:1; display:flex; min-height:0; position:relative; background:var(--bg); }
   #gutter{ flex:none; width:var(--gw,48px); overflow:hidden; background:var(--panel); border-right:1px solid var(--line); position:relative; cursor:default; user-select:none; }
-  #gutterInner{ position:absolute; left:0; right:0; top:0; padding:4px 10px 0 4px; text-align:right; font:var(--fs)/var(--lh) var(--mono); color:var(--muted); white-space:pre; will-change:transform; }
+  #gutterInner{ position:absolute; left:0; right:0; top:0; padding:4px 4px 0 4px; text-align:right; font:var(--fs)/var(--lh) var(--mono); color:var(--muted); white-space:pre; will-change:transform; }
+  .fm{ display:inline-block; width:12px; margin-left:3px; text-align:center; font-size:10px; color:var(--muted); opacity:.45; cursor:pointer; }
+  #gutter:hover .fm{ opacity:.9; }
+  .fm.on{ color:var(--accent); opacity:1; font-size:11px; }
+  .foldtag{ color:var(--muted); background:var(--panel2); border:1px solid var(--line); border-radius:4px; padding:0 5px; font-size:11px; margin-left:8px; vertical-align:top; }
   #gutterInner .cur{ color:var(--ink); font-weight:700; }
   #gutterInner .bm{ color:var(--accent); font-weight:700; }
   #gutterInner .bm::before{ content:''; position:absolute; left:3px; width:4px; height:calc(var(--lh) - 8px); margin-top:4px; border-radius:2px; background:var(--accent); }
@@ -175,6 +179,7 @@
   .modal .opt{ font:12px var(--mono); padding:3px 7px; border:1px solid var(--line); }
   .modal .opt.on{ background:var(--accent-soft); border-color:var(--accent); }
   #codeWrap{ flex:1; position:relative; overflow:hidden; min-width:0; }
+  #ruler{ position:absolute; right:0; top:0; bottom:0; width:10px; pointer-events:none; z-index:6; }
   #curLine{ position:absolute; left:0; right:0; height:var(--lh); background:var(--curline); pointer-events:none; }
   .layer{ position:absolute; left:0; top:0; margin:0; padding:4px 12px 0; font:var(--fs)/var(--lh) var(--mono); white-space:pre; tab-size:var(--tab); pointer-events:none; will-change:transform; }
   #marks{ color:transparent; }
@@ -351,6 +356,10 @@
         <button data-cmd="compare">두 탭 비교 <kbd data-key="compare"></kbd></button>
         <button data-cmd="closeCompare">비교 닫기 <kbd data-key="closeCompare"></kbd></button>
         <hr>
+        <button data-cmd="foldToggle" title="들여쓰기 기준으로 커서가 있는 블록을 접거나 펴요. 줄 번호 옆 ▾ 를 눌러도 돼요">현재 블록 접기/펴기 <kbd data-key="foldToggle"></kbd></button>
+        <button data-cmd="foldAll">모두 접기 <kbd data-key="foldAll"></kbd></button>
+        <button data-cmd="unfoldAll">모두 펴기 <kbd data-key="unfoldAll"></kbd></button>
+        <hr>
         <label class="row" title="공백은 ·, 탭은 점, 줄 끝은 ¶로 보여줘요">공백·탭·줄 끝 표시 <input type="checkbox" id="setWs"></label>
         <div class="row">글꼴 크기
           <span class="step"><button data-cmd="fontDown">−</button><b id="fsVal">14</b><button data-cmd="fontUp">+</button></span>
@@ -476,6 +485,7 @@
       </div>
       <div id="editorHost">
         <div id="acBox" class="hidden"></div>
+        <canvas id="ruler" width="10" height="0"></canvas>
         <div id="gutter"><div id="gutterInner"></div></div>
         <div id="codeWrap">
           <div id="spacer"></div>
@@ -1036,7 +1046,7 @@ function lineOf(ls, pos){ var lo=0, hi=ls.length-1; while(lo<hi){ var mid=(lo+hi
 function lineEnd(d, i){ return i+1<d.ls.length ? d.ls[i+1]-1 : d.text.length; }
 function lineText(d, i){ return textSlice(d, d.ls[i], lineEnd(d,i)); }
 // 대용량 모드에서 d.text는 (앞+구간+뒤)로 이어 붙인 문자열이라 통째로 자르면 한 번에 복사된다. 구간 안이면 구간에서 읽는다
-function textSlice(d, s, e){ if(d.big && s>=d.off && e<=d.off+d.local.length) return d.local.slice(s-d.off, e-d.off); return d.text.slice(s, e); }
+function textSlice(d, s, e){ if(d.big && !d.gaps.length && s>=d.off && e<=d.off+d.local.length) return d.local.slice(s-d.off, e-d.off); return d.text.slice(s, e); }
 function patchLines(d, str, base, nLen, start, oldEnd, delta){
   var ls=d.ls, L0=lineOf(ls,start), L1=lineOf(ls,oldEnd);
   var limit=L1+1<ls.length ? ls[L1+1]+delta : nLen+1;
@@ -1046,22 +1056,40 @@ function patchLines(d, str, base, nLen, start, oldEnd, delta){
   Array.prototype.splice.apply(ls, [L0+1, L1-L0].concat(inner));
   return L0;
 }
+// 입력칸(local) 좌표와 문서 좌표: 대용량 구간 시작(off)과 접힌 구간(gaps)만큼 어긋난다
+function toDoc(d, p){ var r=d.off+p, g=d.gaps; for(var i=0;i<g.length && g[i].lp<p;i++) r+=g[i].len; return r; }
+function toDocEnd(d, p){ var r=d.off+p, g=d.gaps; for(var i=0;i<g.length && g[i].lp<=p;i++) r+=g[i].len; return r; }
+function toLocal(d, pos){ var p=pos-d.off, g=d.gaps; for(var i=0;i<g.length && g[i].gs<pos;i++) p-=g[i].ge<=pos ? g[i].len : pos-g[i].gs; return p; }
 function syncText(d, type){
-  var local=d.ta.value, oldLocal=d.local, nt=d.big ? d.head+local+d.tail : local, ot=d.text, pre=d.pre, L0=-1, oldN=d.ls.length, L1=0, off=d.off;
-  d.pre=null;
-  if(pre && ot!=null && !/history|Drag|Drop/.test(type||'')){
-    var delta=nt.length-ot.length, caret=d.off+d.ta.selectionEnd;
-    var start=Math.max(d.off, Math.min(pre.s, caret)-8), newEnd=Math.max(caret, start), oldEnd=newEnd-delta;
-    if(oldLocal!=null && oldEnd>=start && oldEnd-off<=oldLocal.length && newEnd-off<=local.length){
-      var w=Math.max(off, start-32);
-      if(oldLocal.slice(w-off,start-off)===local.slice(w-off,start-off) && oldLocal.slice(oldEnd-off, oldEnd-off+32)===local.slice(newEnd-off, newEnd-off+32)){
-        L1=lineOf(d.ls, oldEnd);
-        recordEdit(d, start, ot.slice(start, oldEnd), nt.slice(start, newEnd), [pre.s, pre.e], type); var recd=true;
-        L0=patchLines(d, local, off, nt.length, start, oldEnd, delta);
-      }
+  var local=d.ta.value, oldLocal=d.local, ot=d.text, pre=d.pre, preL=d.preL, L0=-1, oldN=d.ls.length, L1=0, nt=null, recd=false;
+  var start=-1, oldEnd=0, newEnd=0, delta=oldLocal!=null ? local.length-oldLocal.length : 0;
+  d.pre=null; d.preL=null;
+  if(ot!=null && oldLocal!=null && !/history|Drag|Drop/.test(type||'')){
+    // 입력 직전 커서(preL) 근처만 비교해서 바뀐 범위를 찾는다. 안 맞으면 앞뒤에서부터 비교한다 (입력 한 번은 이어진 한 범위만 바꾼다)
+    if(pre && preL){
+      var caret=d.ta.selectionEnd, st0=Math.max(0, Math.min(preL.s, caret)-8), ne0=Math.max(caret, st0), oe0=ne0-delta, w=Math.max(0, st0-32);
+      if(oe0>=st0 && oe0<=oldLocal.length && ne0<=local.length && oldLocal.slice(w,st0)===local.slice(w,st0) && oldLocal.slice(oe0, oe0+32)===local.slice(ne0, ne0+32)){ start=st0; oldEnd=oe0; newEnd=ne0; }
+    }
+    if(start<0){
+      var n=Math.min(oldLocal.length, local.length), p=0, q=0;
+      while(p<n && oldLocal.charCodeAt(p)===local.charCodeAt(p)) p++;
+      while(q<n-p && oldLocal.charCodeAt(oldLocal.length-1-q)===local.charCodeAt(local.length-1-q)) q++;
+      start=p; oldEnd=oldLocal.length-q; newEnd=local.length-q;
     }
   }
-  if(L0<0 && !recd && ot!=null) recordDiff(d, ot, nt, pre ? [pre.s, pre.e] : null, type);
+  if(start>=0){
+    // 바뀐 범위를 문서 좌표로. 범위 안에 접힌 구간이 있으면 숨은 글도 함께 지워진 것으로 본다
+    var docA=toDoc(d, start), docB=toDoc(d, oldEnd), ins=local.slice(start, newEnd);
+    nt=ot.slice(0, docA)+ins+ot.slice(docB);
+    L1=lineOf(d.ls, docB);
+    recordEdit(d, docA, ot.slice(docA, docB), ins, pre ? [pre.s, pre.e] : null, type); recd=true;
+    L0=patchLines(d, nt, 0, nt.length, docA, docB, nt.length-ot.length);
+    shiftFolds(d, docA, docB, nt.length-ot.length);
+  }else{
+    nt=d.head+reinsertGaps(d, local)+d.tail;
+    if(ot!=null && !recd) recordDiff(d, ot, nt, pre ? [pre.s, pre.e] : null, type);
+    if(ot!=null) remapFolds(d, ot, nt);
+  }
   if(d.bm.size && ot!=null){ if(L0<0) remapBm(d, ot, nt); else shiftBm(d, L0, L1, d.ls.length-oldN); }
   d.text=nt; d.local=local;
   if(L0<0){ d.ls=buildLs(nt); d.states=[null]; d.stDirty=0; d.stEnd=0; }
@@ -1075,8 +1103,132 @@ function syncText(d, type){
     var shiftedEnd=d.stEnd>L1 ? d.stEnd+added-removed : d.stEnd;
     d.stDirty=Math.min(d.stDirty, L0); d.stEnd=Math.max(shiftedEnd, L0+added);
   }
-  if(d.big) d.w1=lineOf(d.ls, d.off+local.length)+1;
+  rebuildGaps(d);
+  if(d.big) d.w1=lineOf(d.ls, toDocEnd(d, local.length))+1;
   if(L0<0) d._fullSync=(d._fullSync||0)+1;
+}
+
+// ================= 코드 접기 =================
+// 접힌 구간은 문서 좌표 {s,e} 로 둔다 (s: 머리 줄 끝의 줄바꿈 위치, e: 마지막으로 숨는 줄 끝). 숨은 글은 입력칸에 올리지 않고,
+// 입력칸 좌표와 문서 좌표 사이를 toDoc/toLocal 로 바꾼다. 구간을 건드리는 편집이 생기면 그 접기는 풀린다.
+function mergedFolds(d){
+  var out=[]; d.folds.forEach(function(f){ var l=out[out.length-1]; if(l && f.s<=l.e){ if(f.e>l.e) l.e=f.e; } else out.push({ s:f.s, e:f.e }); }); return out;
+}
+// 입력칸에 올라간 구간(off 부터) 안의 접힌 자리를 local 좌표로 계산한다
+function rebuildGaps(d){
+  var g=[], t=d.text;
+  if(d.folds.length){
+    var n0=d.folds.length; d.folds=d.folds.filter(function(f){ return f.e>f.s && f.s<t.length && t.charCodeAt(f.s)===10 && f.e<=t.length; }); if(d.folds.length!==n0) d.fver++;
+    var acc=0, off=d.off, n=d.local.length;
+    mergedFolds(d).forEach(function(f){ if(f.s<off) return; var lp=f.s-off-acc; if(lp>n) return; g.push({ gs:f.s, ge:f.e, lp:lp, len:f.e-f.s }); acc+=f.e-f.s; });
+  }
+  d.gaps=g;
+}
+function localText(d, off, end){
+  if(!d.folds.length) return d.text.slice(off, end);
+  var out='', p=off;
+  mergedFolds(d).forEach(function(f){ if(f.e<=off || f.s>=end) return; out+=d.text.slice(p, Math.max(p, f.s)); p=Math.max(p, f.e); });
+  return out+d.text.slice(p, end);
+}
+function reinsertGaps(d, local){
+  var g=d.gaps; if(!g.length) return local;
+  var out='', p=0;
+  g.forEach(function(gp){ var lp=Math.min(gp.lp, local.length); out+=local.slice(p, lp)+d.text.slice(gp.gs, gp.ge); p=lp; });
+  return out+local.slice(p);
+}
+// 문서 [a,b) 가 길이 차 delta 로 바뀌었을 때: 앞쪽은 그대로, 뒤쪽은 밀고, 걸친 접기는 푼다
+function shiftFolds(d, a, b, delta){
+  if(!d.folds.length) return;
+  var n=d.folds.length;
+  d.folds=d.folds.filter(function(f){ if(f.e<=a) return true; if(f.s>=b){ f.s+=delta; f.e+=delta; return true; } return false; });
+  if(d.folds.length!==n) d.fver++;
+}
+function remapFolds(d, ot, nt){
+  if(!d.folds.length) return;
+  var n=Math.min(ot.length, nt.length), p=0, q=0;
+  while(p<n && ot.charCodeAt(p)===nt.charCodeAt(p)) p++;
+  while(q<n-p && ot.charCodeAt(ot.length-1-q)===nt.charCodeAt(nt.length-1-q)) q++;
+  shiftFolds(d, p, ot.length-q, nt.length-ot.length);
+}
+// 줄 단위 보기: 머리 줄 h 와 마지막 숨은 줄 k (문서 버전·접기 버전별로 캐시)
+function foldLines(d){
+  var c=d._fl; if(c && c.ver===d.ver && c.fver===d.fver) return c.list;
+  var list=d.folds.length ? mergedFolds(d).map(function(f){ return { h:lineOf(d.ls, f.s), k:lineOf(d.ls, f.e), s:f.s, e:f.e }; }) : [];
+  d._fl={ ver:d.ver, fver:d.fver, list:list }; return list;
+}
+function foldHeader(d, line){ var fl=foldLines(d); for(var i=0;i<fl.length;i++){ if(fl[i].h===line) return fl[i]; if(fl[i].h>line) break; } return null; }
+function rowOf(d, line){ if(!d.folds.length) return line; var fl=foldLines(d), r=line; for(var i=0;i<fl.length && fl[i].h<line;i++) r-=Math.min(fl[i].k, line)-fl[i].h; return r; }
+function lineAtRow(d, row){ if(!d.folds.length) return row; var fl=foldLines(d), line=row; for(var i=0;i<fl.length && fl[i].h<line;i++) line+=fl[i].k-fl[i].h; return line; }
+function rowCount(d){ return rowOf(d, d.ls.length); }
+function nextVisible(d, line){ var f=d.folds.length?foldHeader(d, line):null; return f?f.k+1:line+1; }
+function visibleLines(d, r0, r1){ var out=[], line=lineAtRow(d, r0), N=d.ls.length; for(var r=r0;r<=r1 && line<N;r++){ out.push(line); line=nextVisible(d, line); } return out; }
+function indentOf(t){ var n=0; for(var i=0;i<t.length;i++){ var ch=t.charCodeAt(i); if(ch===32) n++; else if(ch===9) n+=settings.tab-(n%settings.tab); else break; } return n; }
+function foldSkip(d, t){ return t.trim()==='' || (t.charCodeAt(0)===42 && isAbap(d)); }
+// 들여쓰기 기준: 다음에 오는 더 깊이 들여쓴 줄들이 접힌다. 접을 수 있으면 마지막 줄 번호, 아니면 -1
+function foldEnd(d, line){
+  var t=lineText(d, line); if(foldSkip(d, t)) return -1;
+  var c=d._fc; if(!c || c.ver!==d.ver) c=d._fc={ ver:d.ver, m:new Map() };
+  if(c.m.has(line)) return c.m.get(line);
+  var ind=indentOf(t), N=d.ls.length, k=-1, lim=Math.min(N, line+200000);
+  for(var j=line+1;j<lim;j++){ var u=lineText(d, j); if(foldSkip(d, u)) continue; if(indentOf(u)>ind) k=j; else break; }
+  c.m.set(line, k); return k;
+}
+function canFold(d, line){
+  var t=lineText(d, line); if(foldSkip(d, t)) return false;
+  var ind=indentOf(t), N=d.ls.length;
+  for(var j=line+1;j<N && j<line+300;j++){ var u=lineText(d, j); if(foldSkip(d, u)) continue; return indentOf(u)>ind; }
+  return false;
+}
+function foldsChanged(d){
+  d.fver++;
+  if(d.big) setWindow(d, d.w0, d.w1); else setWindow(d, 0, d.ls.length);
+  if(d===active){ requestRender(); updateStatus(); if(findOpen) scheduleFindCount(); }
+  scheduleSnapshot();
+}
+function addFold(d, h, k){
+  var fs=lineEnd(d, h), fe=lineEnd(d, k);
+  if(fe<=fs || d.folds.some(function(f){ return f.s===fs; })) return false;
+  d.folds.push({ s:fs, e:fe }); d.folds.sort(function(x, y){ return x.s-y.s; }); return true;
+}
+function removeFoldAt(d, h){ var fs=lineEnd(d, h), n=d.folds.length; d.folds=d.folds.filter(function(f){ return f.s!==fs; }); return d.folds.length!==n; }
+// 숨은 자리(s 안쪽)가 보여야 하면 그 접기를 푼다
+function revealRange(d, s, e){
+  if(!d.folds.length) return;
+  var lo=Math.min(s, e), hi=Math.max(s, e), n=d.folds.length;
+  d.folds=d.folds.filter(function(f){ return !((lo>f.s && lo<f.e) || (hi>f.s && hi<f.e)); });
+  if(d.folds.length!==n) foldsChanged(d);
+}
+// 입력칸 [la,lb) 범위의 편집이 접힌 자리를 건드리면 먼저 푼다 (숨은 글이 모르게 지워지지 않도록)
+function unfoldGapsIn(d, la, lb){
+  if(!d.gaps.length) return false;
+  var hit=d.gaps.filter(function(g){ return g.lp>=la && g.lp<lb; });
+  if(!hit.length) return false;
+  d.folds=d.folds.filter(function(f){ return !hit.some(function(g){ return f.s>=g.gs && f.e<=g.ge; }); });
+  foldsChanged(d); return true;
+}
+function selSpansGap(d){ var a=d.ta.selectionStart, b=d.ta.selectionEnd; return b>a && d.gaps.some(function(g){ return g.lp>=a && g.lp<b; }); }
+function toggleFoldAt(d, line){
+  if(d.grid) return;
+  if(foldHeader(d, line)){ removeFoldAt(d, line); foldsChanged(d); return; }
+  var k=foldEnd(d, line);
+  if(k<0){
+    // 접을 머리 줄이 아니면 이 줄을 감싸는 블록을 접는다
+    var ind=indentOf(lineText(d, line)), h=-1;
+    for(var j=line-1;j>=0 && line-j<20000;j--){ var t=lineText(d, j); if(foldSkip(d, t)) continue; if(indentOf(t)<ind){ h=j; break; } }
+    if(h<0 || foldEnd(d, h)<line) return toast('여기서 접을 블록이 없어요 (들여쓰기 기준)');
+    line=h; k=foldEnd(d, h);
+  }
+  if(addFold(d, line, k)) foldsChanged(d);
+}
+function foldAll(d){
+  if(d.grid) return;
+  var N=d.ls.length, n=0; if(N>50000) return toast('5만 줄이 넘는 문서는 모두 접기를 지원하지 않아요');
+  for(var i=0;i<N;i++){ var k=foldEnd(d, i); if(k>i && addFold(d, i, k)) n++; }
+  if(n) foldsChanged(d); toast(n?'블록 '+n+'개를 접었어요':'접을 블록이 없어요 (들여쓰기 기준)');
+}
+function unfoldAll(d, quiet){
+  if(!d.folds.length){ if(!quiet) toast('접힌 곳이 없어요'); return; }
+  var n=d.folds.length; d.folds=[]; foldsChanged(d); if(!quiet) toast('접힌 곳 '+n+'개를 폈어요');
 }
 
 // ================= 문서와 탭 =================
@@ -1088,13 +1240,14 @@ function makeDoc(o){
     handle:o.handle||null, eol:o.eol||'\r\n', enc:o.enc||'utf-8', savedText:o.savedText!==undefined?o.savedText:'',
     states:[null], stDirty:0, stEnd:0, delim:o.delim||null, grid:false, snapDirty:true, untitled:!!o.untitled, col:null, pre:null,
     big:false, off:0, w0:0, w1:1, head:'', tail:'', gsel:null, hostPath:o.hostPath||null, undo:[], redo:[], undoBytes:0, undoSeal:true, composing:false,
-    bm:new Set(o.bm||[]), mtime:o.mtime!=null?o.mtime:null };
+    bm:new Set(o.bm||[]), mtime:o.mtime!=null?o.mtime:null, folds:[], gaps:[], fver:0, preL:null };
   var ta=document.createElement('textarea');
   ta.className='ed'; ta.spellcheck=false; ta.setAttribute('wrap','off');
   ta.setAttribute('autocomplete','off'); ta.setAttribute('autocorrect','off'); ta.setAttribute('autocapitalize','off');
   d.ta=ta; d.text=o.text||''; d.ls=buildLs(d.text);
   d.big=d.ls.length>BIG_LINES;
   if(d.big) setWindow(d, 0, WIN_LINES); else { ta.value=d.text; d.local=d.text; d.w1=d.ls.length; }
+  d.wend=d.big?lineEnd(d, d.w1-1):d.text.length;
   if(d.lang==='csv' && !d.delim) d.delim=detectDelim(d.text, d.name);
   ta.addEventListener('beforeinput', function(e){
     if(e.inputType==='historyUndo' || e.inputType==='historyRedo'){ e.preventDefault(); undoCmd(d, e.inputType==='historyRedo'); return; }
@@ -1103,7 +1256,13 @@ function makeDoc(o){
     if(d.vsel && e.inputType==='insertText' && e.data){ e.preventDefault(); replaceRange(d, d.vsel.s, d.vsel.e, e.data); return; }
     // 입력은 실제 커서 자리에 들어가므로, 구간 밖에 기억해 둔 커서는 버린다
     if(d.gsel){ d.gsel=null; ta.classList.remove('away'); }
-    if(!d.pre) d.pre={ s:sA(d), e:sB(d) };
+    if(d.gaps.length){
+      var ss=ta.selectionStart, se=ta.selectionEnd, it=e.inputType||'';
+      if(se>ss) unfoldGapsIn(d, ss, se);
+      else if(it==='deleteContentForward') unfoldGapsIn(d, ss, ss+1);
+      else if(it==='deleteContentBackward' && ss>0) unfoldGapsIn(d, ss-1, ss);
+    }
+    if(!d.pre){ d.pre={ s:sA(d), e:sB(d) }; d.preL={ s:ta.selectionStart, e:ta.selectionEnd }; }
   });
   ta.addEventListener('input', function(e){ onInput(d, e.inputType); });
   ta.addEventListener('scroll', requestRender);
@@ -1115,12 +1274,15 @@ function makeDoc(o){
   ta.addEventListener('copy', function(e){
     if(d.col){ e.preventDefault(); e.clipboardData.setData('text/plain', colText(d)); }
     else if(d.vsel){ e.preventDefault(); e.clipboardData.setData('text/plain', crlf(d.text.slice(d.vsel.s, d.vsel.e))); toast('복사했어요 ('+(d.vsel.e-d.vsel.s).toLocaleString()+'자)'); }
+    else if(selSpansGap(d)){ e.preventDefault(); e.clipboardData.setData('text/plain', crlf(d.text.slice(sA(d), sB(d)))); toast('접힌 줄까지 복사했어요'); }
   });
   ta.addEventListener('cut', function(e){
     if(d.col){ e.preventDefault(); e.clipboardData.setData('text/plain', colText(d)); colDelete(d, false, true); }
     else if(d.vsel){ e.preventDefault(); e.clipboardData.setData('text/plain', crlf(d.text.slice(d.vsel.s, d.vsel.e))); replaceRange(d, d.vsel.s, d.vsel.e, ''); }
+    else if(selSpansGap(d)){ e.preventDefault(); var ca=sA(d), cb=sB(d); e.clipboardData.setData('text/plain', crlf(d.text.slice(ca, cb))); replaceRange(d, ca, cb, ''); }
   });
-  ta.addEventListener('compositionstart', function(){ if(d.vsel) replaceRange(d, d.vsel.s, d.vsel.e, ''); d.composing=true; });
+  ta.addEventListener('compositionstart', function(){ if(d.vsel) replaceRange(d, d.vsel.s, d.vsel.e, ''); else if(d.gaps.length && selSpansGap(d)) unfoldGapsIn(d, ta.selectionStart, ta.selectionEnd); d.composing=true; });
+  ta.addEventListener('dragstart', function(e){ if(d.gaps.length && selSpansGap(d)) e.preventDefault(); });
   ta.addEventListener('compositionend', function(){ d.composing=false; });
   ta.addEventListener('mousedown', function(){ d.undoSeal=true; });
   ta.addEventListener('paste', function(e){
@@ -1145,6 +1307,7 @@ function setValue(d, text){
   var cl=lineOf(d.ls, sA(d));
   recordDiff(d, d.text, text, [sA(d), sB(d)], 'replace'); d.undoSeal=true;
   if(d.bm.size) remapBm(d, d.text, text);
+  remapFolds(d, d.text, text);
   d.text=text; d.ls=buildLs(text); d.states=[null]; d.stDirty=0; d.stEnd=0; d.pre=null; d.gsel=null; d.vsel=null;
   d.big=d.ls.length>BIG_LINES;
   cl=Math.min(cl, d.ls.length-1);
@@ -1260,38 +1423,42 @@ function updateGutterWidth(){
   if(!active) return;
   var digits=Math.max(3, String(active.ls.length).length);
   if(digits===gwDigits) return; gwDigits=digits;
-  document.documentElement.style.setProperty('--gw', (digits*settings.fs*0.6+22|0)+'px');
+  document.documentElement.style.setProperty('--gw', (digits*settings.fs*0.6+34|0)+'px');
 }
 function render(){
   renderQueued=false;
   var d=active; if(!d || d.grid) return;
   var sc=scroller(d), st=sc.scrollTop, sl=sc.scrollLeft, H=codeWrap.clientHeight;
-  var first=Math.max(0, Math.floor((st-PAD_TOP)/LH)-2);
-  var last=Math.min(d.ls.length-1, Math.ceil((st+H)/LH)+2);
+  var firstRow=Math.max(0, Math.floor((st-PAD_TOP)/LH)-2);
+  var lastRow=Math.min(rowCount(d)-1, Math.ceil((st+H)/LH)+2);
   var L=LANGS[d.lang]||LANGS.text, html=[], nums=[];
   if(d.big){ scrollWindow(d, st, H); sizeBig(d, false); }
+  var lines=visibleLines(d, firstRow, lastRow), first=lines.length?lines[0]:0, last=lines.length?lines[lines.length-1]:-1, hasFold=d.folds.length>0;
   ensureStates(d, first);
   var state=L.multiline ? (d.states[first]||null) : null;
   var curL=lineOf(d.ls, sA(d));
   // 대용량 모드에서는 겹쳐 그리는 층들이 바깥 상자와 함께 스크롤되므로 문서 좌표 그대로 둔다
   var ox=d.big?0:-sl, oy=d.big?0:-st;
-  for(var i=first;i<=last;i++){
-    var r=tokenize(d, lineText(d,i), state);
-    html.push(settings.showWs ? wsify(r[0])+(i<d.ls.length-1?'<span class="ws">¶</span>':'') : r[0]);
+  for(var li=0, prev=-1;li<lines.length;li++){
+    var i=lines[li];
+    if(prev>=0 && i!==prev+1 && L.multiline){ ensureStates(d, i); state=d.states[i]||null; }
+    var r=tokenize(d, lineText(d,i), state), fh=hasFold?foldHeader(d, i):null;
+    html.push((settings.showWs ? wsify(r[0])+(i<d.ls.length-1?'<span class="ws">¶</span>':'') : r[0])+(fh?'<span class="foldtag">⋯ '+(fh.k-fh.h)+'줄</span>':''));
     if(L.multiline && d.stDirty===i && d.states.length===i+1){ d.states[i+1]=r[1]; d.stDirty=i+1; }
-    state=r[1];
+    state=r[1]; prev=i;
     var ncls=(i===curL?'cur':'')+(d.bm.has(i)?' bm':'');
-    nums.push(ncls?'<span class="'+ncls+'">'+(i+1)+'</span>':String(i+1));
+    var fm=fh?'<span class="fm on" data-ln="'+i+'">▸</span>':canFold(d, i)?'<span class="fm" data-ln="'+i+'">▾</span>':'<span class="fm"></span>';
+    nums.push((ncls?'<span class="'+ncls+'">'+(i+1)+'</span>':String(i+1))+fm);
   }
   hl.innerHTML=html.join('\n')+'\n';
-  var ty=first*LH+oy;
+  var ty=firstRow*LH+oy;
   hl.style.transform='translate('+ox+'px,'+ty+'px)';
   gutterInner.innerHTML=nums.join('\n');
-  gutterInner.style.transform='translateY('+(first*LH-st)+'px)';
-  curLine.style.top=(PAD_TOP+curL*LH+oy)+'px';
+  gutterInner.style.transform='translateY('+(firstRow*LH-st)+'px)';
+  curLine.style.top=(PAD_TOP+rowOf(d, curL)*LH+oy)+'px';
   curLine.style.left=(d.big?sl:0)+'px';
   curLine.style.display=(d.col||d.vsel)?'none':'';
-  renderMarks(d, first, last, ty, -ox);
+  renderMarks(d, lines, ty, -ox);
   renderCol(d, first, last, -oy, -ox);
   renderBrace(d, first, last, -oy, -ox);
   if(ac.open) acPosition();
@@ -1321,9 +1488,9 @@ function renderBrace(d, first, last, st, sl){
   if(!pr){ if(braceLayer.firstChild) braceLayer.innerHTML=''; return; }
   var html=[];
   pr.forEach(function(pos){
-    var ln=lineOf(d.ls, pos); if(ln<first || ln>last) return;
+    var ln=lineOf(d.ls, pos); if(ln<first || ln>last || lineAtRow(d, rowOf(d, ln))!==ln) return;
     var t=lineText(d, ln), x=xOf(t, pos-d.ls[ln]);
-    html.push('<div style="top:'+(PAD_TOP+ln*LH)+'px;left:'+(PAD_LEFT+x-1)+'px;width:'+(charAdvance(t.charCodeAt(pos-d.ls[ln]), x)+1)+'px"></div>');
+    html.push('<div style="top:'+(PAD_TOP+rowOf(d, ln)*LH)+'px;left:'+(PAD_LEFT+x-1)+'px;width:'+(charAdvance(t.charCodeAt(pos-d.ls[ln]), x)+1)+'px"></div>');
   });
   braceLayer.innerHTML=html.join('');
   braceLayer.style.transform='translate('+(-sl)+'px,'+(-st)+'px)';
@@ -1335,14 +1502,14 @@ function smartWord(d){
   var w=textSlice(d,a,b);
   return /^[\w$\u00C0-\uFFFF\-]+$/.test(w) ? w : null;
 }
-function renderMarks(d, first, last, ty, sl){
+function renderMarks(d, lines, ty, sl){
   var re=null, cls='', sw=null;
   if(findOpen && findRe && findRe!=='err') re=new RegExp(findRe.source, findRe.flags.replace('m',''));
   else if((sw=smartWord(d))){ re=new RegExp('(?<![\\w$\\u00C0-\\uFFFF])'+escRe(sw)+'(?![\\w$\\u00C0-\\uFFFF])','g'); cls='smart'; }
   if(!re){ if(marks.firstChild) marks.innerHTML=''; return; }
   var cur=(findOpen && curMatch)?curMatch:null, out=[];
-  for(var i=first;i<=last;i++){
-    var off=d.ls[i], line=lineText(d,i), s=line.length>HL_LIMIT?line.slice(0,HL_LIMIT):line, l2=0, m, parts=[];
+  for(var li=0;li<lines.length;li++){
+    var i=lines[li], off=d.ls[i], line=lineText(d,i), s=line.length>HL_LIMIT?line.slice(0,HL_LIMIT):line, l2=0, m, parts=[];
     re.lastIndex=0;
     while((m=re.exec(s))){
       if(m[0].length===0){ re.lastIndex++; continue; }
@@ -1384,13 +1551,15 @@ function edit(d, s, e, text, selS, selE){
   if(s===e && text==='') return;
   if(tooWide(d, s, e)){ setValue(d, d.text.slice(0,s)+text+d.text.slice(e)); setSel(d, selS!=null?selS:s+text.length, selE!=null?selE:(selS!=null?selS:s+text.length)); return; }
   d.vsel=null;
+  revealRange(d, s, e);
   ensureWindow(d, lineOf(d.ls,s), lineOf(d.ls,e), 2);
   d.gsel=null;
   ta.focus();
-  ta.setSelectionRange(s-d.off, e-d.off);
-  d.pre={ s:s, e:e }; d.undoSeal=true;
+  var ls_=toLocal(d, s), le_=toLocal(d, e);
+  ta.setSelectionRange(ls_, le_);
+  d.pre={ s:s, e:e }; d.preL={ s:ls_, e:le_ }; d.undoSeal=true;
   var ok=text==='' ? document.execCommand('delete') : document.execCommand('insertText', false, text);
-  if(!ok){ ta.setRangeText(text, s-d.off, e-d.off, 'end'); onInput(d, null); }
+  if(!ok){ ta.setRangeText(text, ls_, le_, 'end'); onInput(d, null); }
   d.undoSeal=true;
   if(selS!=null) setSel(d, selS, selE==null?selS:selE);
 }
@@ -1403,16 +1572,17 @@ function edit(d, s, e, text, selS, selE){
 var BIG_LINES=600, WIN_LINES=1500, CARET_TOP=150, CARET_MAX=350, SEL_MAX=8000, HUGE_LINES=15000;
 function placeAt(d, la, lb){ var w0=Math.max(0, la-CARET_TOP); setWindow(d, w0, Math.max(w0+WIN_LINES, (lb==null?la:lb)+200)); }
 // vsel: 구간보다 큰 가상 선택(전체 선택 등), gsel: 구간 밖으로 스크롤했을 때 기억해 둔 커서
-function sA(d){ return d.vsel ? d.vsel.s : d.gsel ? d.gsel.s : d.off+d.ta.selectionStart; }
-function sB(d){ return d.vsel ? d.vsel.e : d.gsel ? d.gsel.e : d.off+d.ta.selectionEnd; }
+function sA(d){ return d.vsel ? d.vsel.s : d.gsel ? d.gsel.s : toDoc(d, d.ta.selectionStart); }
+function sB(d){ return d.vsel ? d.vsel.e : d.gsel ? d.gsel.e : toDoc(d, d.ta.selectionEnd); }
 function tooWide(d, s, e){ return d.big && lineOf(d.ls, Math.max(s,e))-lineOf(d.ls, Math.min(s,e))>SEL_MAX; }
 function setSel(d, s, e){
   if(e==null) e=s;
   if(tooWide(d, s, e)){ d.vsel={ s:Math.min(s,e), e:Math.max(s,e) }; d.gsel=null; d.ta.classList.add('away'); requestRender(); return; }
   d.vsel=null;
+  revealRange(d, s, e);
   ensureWindow(d, lineOf(d.ls, Math.min(s,e)), lineOf(d.ls, Math.max(s,e)), 2);
   d.gsel=null; d.ta.classList.remove('away');
-  d.ta.setSelectionRange(s-d.off, e-d.off);
+  d.ta.setSelectionRange(toLocal(d, s), toLocal(d, e));
 }
 // ================= 실행 취소 =================
 var UNDO_MAX=3000, UNDO_BYTES=64e6;
@@ -1461,9 +1631,10 @@ function undoCmd(d, redo){
     var s=r.s, e=r.s+cur.length;
     if(tooWide(d, s, e) || put.length>300000) setValue(d, d.text.slice(0,s)+put+d.text.slice(e));
     else{
-      d.vsel=null; ensureWindow(d, lineOf(d.ls,s), lineOf(d.ls,e), 2); d.gsel=null;
-      d.pre={ s:s, e:e };
-      d.ta.setRangeText(put, s-d.off, e-d.off, 'end');
+      d.vsel=null; revealRange(d, s, e); ensureWindow(d, lineOf(d.ls,s), lineOf(d.ls,e), 2); d.gsel=null;
+      var us=toLocal(d, s), ue=toLocal(d, e);
+      d.pre={ s:s, e:e }; d.preL={ s:us, e:ue };
+      d.ta.setRangeText(put, us, ue, 'end');
       onInput(d, 'undo');
     }
   } finally{ d.undoing=false; }
@@ -1495,20 +1666,25 @@ function setWindow(d, w0, w1){
   var N=d.ls.length, a=sA(d), b=sB(d), sc=scroller(d), st=sc.scrollTop, sl=sc.scrollLeft;
   w0=Math.max(0, w0|0); w1=Math.min(N, Math.max(w0+1, w1|0));
   var off=d.ls[w0], end=lineEnd(d, w1-1);
+  // 접힌 구간이 구간 경계에 걸치면 구간을 넓혀 통째로 넣는다
+  if(d.folds.length) mergedFolds(d).forEach(function(f){
+    if(f.s<off && f.e>off){ w0=lineOf(d.ls, f.s); off=d.ls[w0]; }
+    if(f.s<end && f.e>end){ w1=lineOf(d.ls, f.e)+1; end=lineEnd(d, w1-1); }
+  });
   d.head=d.text.slice(0, off); d.tail=d.text.slice(end);
-  d.off=off; d.w0=w0; d.w1=w1; d.pre=null;
+  d.off=off; d.w0=w0; d.w1=w1; d.wend=end; d.pre=null; d.preL=null;
   d.ta.classList.toggle('big', d.big);
-  d.local=d.text.slice(off, end); d.ta.value=d.local;
-  if(d.big){ d.ta.style.top=(w0*LH)+'px'; sizeBig(d, true); }
+  d.local=localText(d, off, end); d.ta.value=d.local; rebuildGaps(d);
+  if(d.big){ d.ta.style.top=(rowOf(d, w0)*LH)+'px'; sizeBig(d, true); }
   else { d.ta.style.top=''; d.ta.style.height=''; d.ta.style.width=''; }
   // 커서가 새 구간 밖이면 위치를 따로 기억했다가, 다시 입력할 때 그 자리로 돌아간다
   if(a<off || b>end){ d.gsel={ s:a, e:b }; d.ta.classList.add('away'); d.ta.setSelectionRange(0,0); }
-  else { d.gsel=null; d.ta.classList.remove('away'); d.ta.setSelectionRange(a-off, b-off); }
+  else { d.gsel=null; d.ta.classList.remove('away'); d.ta.setSelectionRange(toLocal(d, a), toLocal(d, b)); }
   sc.scrollTop=st; sc.scrollLeft=sl;
 }
 function sizeBigHeight(d){
-  d.ta.style.height=((d.w1-d.w0)*LH+PAD_TOP+LH)+'px';
-  if(d===active) $('spacer').style.height=(d.ls.length*LH+PAD_TOP+LH*3)+'px';
+  d.ta.style.height=((rowOf(d, d.w1)-rowOf(d, d.w0))*LH+PAD_TOP+LH)+'px';
+  if(d===active) $('spacer').style.height=(rowCount(d)*LH+PAD_TOP+LH*3)+'px';
 }
 function sizeBig(d, measureWidth){
   if(!d.big) return;
@@ -1516,7 +1692,7 @@ function sizeBig(d, measureWidth){
   if(measureWidth || d.ta.scrollWidth>d.ta.clientWidth){
     d.ta.style.width=''; d.ta.style.width=Math.max(codeWrap.clientWidth, d.ta.scrollWidth+CW*4)+'px';
   }
-  if(d===active){ var sp=$('spacer'); sp.style.height=(d.ls.length*LH+PAD_TOP+LH*3)+'px'; sp.style.width=d.ta.style.width; }
+  if(d===active){ var sp=$('spacer'); sp.style.height=(rowCount(d)*LH+PAD_TOP+LH*3)+'px'; sp.style.width=d.ta.style.width; }
 }
 function applyScrollMode(d){
   codeWrap.classList.toggle('bigscroll', !!d.big);
@@ -1533,7 +1709,7 @@ function ensureWindow(d, la, lb, margin){
 // 화면을 옮기면 보이는 곳이 구간 위쪽에 오도록 다시 올린다 (거기를 누르고 바로 한글을 쳐도 빠르게)
 function scrollWindow(d, st, H){
   if(d.composing) return;
-  var fv=Math.floor(st/LH), lv=Math.ceil((st+H)/LH), N=d.ls.length, want=Math.max(0, fv-CARET_TOP);
+  var fv=lineAtRow(d, Math.floor(st/LH)), lv=lineAtRow(d, Math.ceil((st+H)/LH)), N=d.ls.length, want=Math.max(0, fv-CARET_TOP);
   if((d.w0>0 && fv<d.w0+40) || (lv>d.w0+CARET_MAX && want>d.w0) || (lv>d.w1-40 && d.w1<N)){
     // 길게 잡은 선택이 구간 안에 있으면 그대로 둔다 (선택을 끊지 않게)
     if(d.w1-d.w0>WIN_LINES+100 && fv>=d.w0 && lv<=d.w1 && sB(d)-sA(d)>0) return;
@@ -1573,7 +1749,7 @@ function bigKey(e, d){
     e.preventDefault();
     var page=Math.max(1, Math.floor((scroller(d).clientHeight||codeWrap.clientHeight)/LH)-1)*(k==='PageDown'?1:-1);
     var head=d.ta.selectionDirection==='backward'?sA(d):sB(d), anchor=head===sA(d)?sB(d):sA(d);
-    var hl0=lineOf(d.ls, head), col=head-d.ls[hl0], tl=Math.max(0, Math.min(d.ls.length-1, hl0+page));
+    var hl0=lineOf(d.ls, head), col=head-d.ls[hl0], tl=Math.max(0, Math.min(d.ls.length-1, lineAtRow(d, Math.max(0, Math.min(rowCount(d)-1, rowOf(d, hl0)+page)))));
     var np=d.ls[tl]+Math.min(col, lineEnd(d,tl)-d.ls[tl]);
     codeWrap.scrollTop+=page*LH;
     if(e.shiftKey) setSel(d, Math.min(anchor,np), Math.max(anchor,np)); else setSel(d, np);
@@ -1704,6 +1880,7 @@ function idxAt(t, x){
 }
 function colBox(d){ var c=d.col; return { top:Math.min(c.al,c.hl), bot:Math.max(c.al,c.hl), xa:Math.min(c.ax,c.hx), xb:Math.max(c.ax,c.hx) }; }
 function setCol(d, col){
+  if(col && d.folds.length) unfoldAll(d, true);
   d.col=col;
   d.ta.classList.toggle('colmode', !!col);
   $('stMode').classList.toggle('hidden', !col);
@@ -1717,9 +1894,9 @@ function exitCol(d){ if(d.col){ d.colComp=null; setCol(d, null); } }
 function renderCol(d, first, last, st, sl){
   if(d.vsel){
     var v=d.vsel, la=lineOf(d.ls, v.s), lb=lineOf(d.ls, v.e), parts=[];
-    for(var j=Math.max(first,la); j<=Math.min(last,lb); j++){
+    for(var j=Math.max(first,la); j<=Math.min(last,lb); j=nextVisible(d, j)){
       var t=lineText(d,j), x0=j===la?xOf(t, v.s-d.ls[j]):0, x1=j===lb?xOf(t, v.e-d.ls[j]):xOf(t, t.length)+CW;
-      if(x1>x0) parts.push('<div style="top:'+(PAD_TOP+j*LH)+'px;left:'+(PAD_LEFT+x0)+'px;width:'+(x1-x0)+'px"></div>');
+      if(x1>x0) parts.push('<div style="top:'+(PAD_TOP+rowOf(d, j)*LH)+'px;left:'+(PAD_LEFT+x0)+'px;width:'+(x1-x0)+'px"></div>');
     }
     colLayer.innerHTML=parts.join('');
     colLayer.style.transform='translate('+(-sl)+'px,'+(-st)+'px)';
@@ -1737,7 +1914,7 @@ function renderCol(d, first, last, st, sl){
 }
 function posFromMouse(d, e){
   var r=codeWrap.getBoundingClientRect(), sc=scroller(d);
-  var line=Math.floor((e.clientY-r.top-PAD_TOP+sc.scrollTop)/LH);
+  var line=lineAtRow(d, Math.max(0, Math.min(rowCount(d)-1, Math.floor((e.clientY-r.top-PAD_TOP+sc.scrollTop)/LH))));
   line=Math.max(0, Math.min(d.ls.length-1, line));
   return { line:line, x:Math.max(0, e.clientX-r.left-PAD_LEFT+sc.scrollLeft) };
 }
@@ -1824,6 +2001,10 @@ function colCompEnd(d, data){
 function onEditorKey(e, d){
   var k=e.key, ctrl=e.ctrlKey||e.metaKey, sh=e.shiftKey, alt=e.altKey;
   if(ac.open && acKey(e, d)) return;
+  if(d.gaps.length && !e.isComposing && !ctrl && !alt && !d.col && !d.vsel && (k.length===1 || k==='Backspace' || k==='Delete' || k==='Enter' || k==='Tab')){
+    var ks=d.ta.selectionStart, ke=d.ta.selectionEnd;
+    if(ke>ks) unfoldGapsIn(d, ks, ke); else if(k==='Delete') unfoldGapsIn(d, ks, ks+1); else if(k==='Backspace' && ks>0) unfoldGapsIn(d, ks-1, ks);
+  }
   if(ctrl && !alt && !e.isComposing && (e.code==='KeyZ' || e.code==='KeyY')){ e.preventDefault(); undoCmd(d, e.code==='KeyY' || sh); return; }
   if(!e.isComposing && /^(Arrow|Home|End|Page)/.test(k)) d.undoSeal=true;
   if(d.big && bigKey(e, d)) return;
@@ -1893,7 +2074,7 @@ $('menuLang').addEventListener('click', function(e){
 });
 
 // ================= 찾기·바꾸기 =================
-var findOpen=false, findRe=null, curMatch=null, findCountTimer=0;
+var findOpen=false, findRe=null, curMatch=null, findCountTimer=0, findAnchor=0;
 var findOpts={ case:false, word:false, ext:false, re:false };
 // 확장 모드: \n \r \t \0 \\ \xHH \uHHHH (줄바꿈은 문서 안에서 \n 하나로 다룬다)
 function unescExt(s){
@@ -1930,29 +2111,55 @@ function openFind(withReplace){
   $('replaceRow').classList.toggle('hidden', !withReplace);
   var s=active.text.slice(sA(active), sB(active));
   if(s && s.indexOf('\n')<0 && s.length<200) $('findInput').value=s;
+  findAnchor=sA(active);
   var fi=$('findInput'); fi.focus(); fi.select();
   updateFindHint(); refreshFind();
 }
 function closeFind(){
-  findOpen=false; curMatch=null; $('findbar').classList.add('hidden'); requestRender();
+  findOpen=false; curMatch=null; $('findbar').classList.add('hidden'); drawRuler(null); requestRender();
   if(active) active.ta.focus();
 }
 function refreshFind(){
   buildFindRe();
   $('findInput').classList.toggle('bad', findRe==='err');
-  curMatch=null; updateFindCount(); requestRender();
+  curMatch=null;
+  // 입력하는 대로 찾기: 찾기를 연 자리(또는 마지막으로 찾은 자리)부터 첫 일치로 바로 간다. 초점은 입력칸에 둔다
+  if(findRe && findRe!=='err' && active && !active.grid){
+    var d=active, v=d.text, m, from=Math.min(findAnchor, v.length);
+    findRe.lastIndex=from; m=findRe.exec(v);
+    while(m && m[0].length===0){ findRe.lastIndex++; m=findRe.exec(v); }
+    if(!m && from>0){ findRe.lastIndex=0; m=findRe.exec(v); while(m && m[0].length===0){ findRe.lastIndex++; m=findRe.exec(v); } }
+    if(m){ curMatch={ s:m.index, e:m.index+m[0].length }; setSel(d, curMatch.s, curMatch.e); revealPos(d, curMatch.s); }
+  }
+  updateFindCount(); requestRender();
+}
+// 스크롤 막대 옆 눈금: 일치하는 줄의 위치를 문서 전체 비율로 찍는다 (lines: 줄 번호 배열, cur: 현재 일치 줄)
+var ruler=$('ruler');
+function drawRuler(lines, cur){
+  var H=$('editorHost').clientHeight|0;
+  if(ruler.height!==H) ruler.height=H;
+  var g=ruler.getContext('2d'); g.clearRect(0,0,ruler.width,H);
+  if(!lines || !active) return;
+  var rows=Math.max(1, rowCount(active)), css=getComputedStyle(document.documentElement);
+  g.fillStyle=css.getPropertyValue('--accent').trim()||'#2563eb'; g.globalAlpha=.55;
+  var seen=new Uint8Array(H+2);
+  for(var i=0;i<lines.length;i++){ var y=Math.min(H-2, Math.floor(rowOf(active, lines[i])/rows*H)); if(seen[y]) continue; seen[y]=1; g.fillRect(2, y, 6, 2); }
+  if(cur!=null){ g.globalAlpha=1; g.fillStyle=css.getPropertyValue('--mark-cur').trim()||'orange'; g.fillRect(0, Math.min(H-3, Math.floor(rowOf(active, cur)/rows*H)), 10, 3); }
+  g.globalAlpha=1;
 }
 function scheduleFindCount(){ clearTimeout(findCountTimer); findCountTimer=setTimeout(updateFindCount, active && active.text.length>1e6?600:200); }
 function updateFindCount(){
   var el=$('findCount');
-  if(!findRe){ el.textContent=''; return; }
-  if(findRe==='err'){ el.textContent='정규식 오류'; return; }
-  var v=active.text, n=0, idx=0, m; findRe.lastIndex=0;
+  if(!findRe || !active){ el.textContent=''; drawRuler(null); return; }
+  if(findRe==='err'){ el.textContent='정규식 오류'; drawRuler(null); return; }
+  var v=active.text, n=0, idx=0, m, ls=active.ls, lines=[], lastLn=-1; findRe.lastIndex=0;
   while((m=findRe.exec(v)) && n<100000){
     if(m[0].length===0){ findRe.lastIndex++; continue; }
     n++; if(curMatch && m.index===curMatch.s) idx=n;
+    var ln=lineOf(ls, m.index); if(ln!==lastLn){ lines.push(ln); lastLn=ln; }
   }
   el.textContent=n?((idx?idx+' / ':'')+n.toLocaleString()+'개'):'결과 없음';
+  drawRuler(lines, curMatch?lineOf(ls, curMatch.s):null);
 }
 function findStep(dir){
   if(!findOpen){ openFind(false); return; }
@@ -1974,13 +2181,13 @@ function findStep(dir){
     hit=lastM||wrapM; if(!lastM && wrapM) toast('끝에서부터 다시 찾아요');
   }
   if(!hit){ curMatch=null; updateFindCount(); requestRender(); return; }
-  curMatch={ s:hit.index, e:hit.index+hit[0].length };
+  curMatch={ s:hit.index, e:hit.index+hit[0].length }; findAnchor=curMatch.s;
   setSel(d, curMatch.s, curMatch.e);
   revealPos(d, curMatch.s);
   updateFindCount(); requestRender(); updateStatus();
 }
 function revealPos(d, pos){
-  var line=lineOf(d.ls, pos), ta=scroller(d), y=line*LH, H=ta.clientHeight||codeWrap.clientHeight;
+  var line=lineOf(d.ls, pos), ta=scroller(d), y=rowOf(d, line)*LH, H=ta.clientHeight||codeWrap.clientHeight;
   if(y<ta.scrollTop || y>ta.scrollTop+H-LH*2) ta.scrollTop=Math.max(0, y-H/2);
   var t=lineText(d,line), x=xOf(t, pos-d.ls[line]), W=ta.clientWidth||codeWrap.clientWidth;
   if(x<ta.scrollLeft || x>ta.scrollLeft+W-60) ta.scrollLeft=Math.max(0, x-W/2);
@@ -3089,7 +3296,7 @@ function snapshot(){
   snapPending=false;
   var meta={ v:1, active:active?active.id:null, untitledN:untitledN, tabs:docs.map(function(d){
     return { id:d.id, name:d.name, path:d.path, lang:d.lang, eol:d.eol, enc:d.enc, handle:d.handle, hostPath:d.hostPath, untitled:d.untitled, delim:d.delim,
-      dirty:isDirty(d), sel:[sA(d), sB(d)], scroll:getScroll(d), bm:Array.from(d.bm), mtime:d.mtime };
+      dirty:isDirty(d), sel:[sA(d), sB(d)], scroll:getScroll(d), bm:Array.from(d.bm), mtime:d.mtime, folds:d.folds };
   }) };
   var writes=docs.filter(function(d){ return d.snapDirty; }).map(function(d){ d.snapDirty=false; return idbSet('text:'+d.id, d.text); });
   writes.push(idbSet('session', meta));
@@ -3110,6 +3317,7 @@ function restore(){
           var d=makeDoc({ id:t.id, name:t.name, path:t.path, lang:LANGS[t.lang]?t.lang:langForName(t.name), eol:t.eol, enc:t.enc, handle:t.handle||null, hostPath:t.hostPath||null,
             untitled:t.untitled, delim:t.delim, text:text, savedText:t.dirty?null:text, bm:t.bm, mtime:t.mtime });
           d.snapDirty=false; d._restore={ sel:t.sel, scroll:t.scroll };
+          if(t.folds && t.folds.length){ d.folds=t.folds.map(function(f){ return { s:f.s, e:f.e }; }).sort(function(x, y){ return x.s-y.s; }); d.fver++; if(d.big) setWindow(d, d.w0, d.w1); else setWindow(d, 0, d.ls.length); }
         });
         activate(docs.filter(function(d){ return d.id===meta.active; })[0]||docs[0], true);
         docs.forEach(function(d){
@@ -3333,7 +3541,7 @@ function outlineGo(i){
   $('outlineModal').classList.add('hidden');
   var d=active, t=lineText(d, it.ln), p=d.ls[it.ln]+Math.max(0, t.search(/\S/));
   d.ta.focus(); setSel(d, p);
-  scroller(d).scrollTop=Math.max(0, it.ln*LH-codeWrap.clientHeight/4); requestRender(); updateStatus();
+  scroller(d).scrollTop=Math.max(0, rowOf(d, it.ln)*LH-codeWrap.clientHeight/4); requestRender(); updateStatus();
 }
 $('outlineInput').addEventListener('input', function(){ outlineSel=0; renderOutline(true); });
 $('outlineInput').addEventListener('keydown', function(e){
@@ -3571,7 +3779,7 @@ function acRender(){
 }
 function acPosition(){
   var d=ac.d; if(!d || d!==active) return acClose();
-  var sc=scroller(d), t=lineText(d, ac.ln), x=PAD_LEFT+xOf(t, ac.start)-sc.scrollLeft+codeWrap.offsetLeft, y=PAD_TOP+(ac.ln+1)*LH-sc.scrollTop;
+  var sc=scroller(d), t=lineText(d, ac.ln), x=PAD_LEFT+xOf(t, ac.start)-sc.scrollLeft+codeWrap.offsetLeft, y=PAD_TOP+(rowOf(d, ac.ln)+1)*LH-sc.scrollTop;
   var host=$('editorHost'), W=host.clientWidth, H=host.clientHeight, bw=acBox.offsetWidth, bh=acBox.offsetHeight;
   if(x+bw>W) x=Math.max(0, W-bw-4);
   if(y+bh>H && y-LH-bh>=0) y=y-LH-bh;
@@ -3711,6 +3919,7 @@ var CMDS={
   colEditor:function(){ if(active && !active.grid) openColEditor(); },
   toggleWs:function(){ settings.showWs=!settings.showWs; saveSettings(); $('setWs').checked=settings.showWs; requestRender(); },
   toggleBookmark:edCmd(function(d){ toggleBookmarkAt(d, lineOf(d.ls, sA(d))); }),
+  foldToggle:edCmd(function(d){ toggleFoldAt(d, lineOf(d.ls, sA(d))); }), foldAll:edCmd(foldAll), unfoldAll:edCmd(function(d){ unfoldAll(d); }),
   nextBookmark:edCmd(function(d){ bookmarkStep(d, 1); }), prevBookmark:edCmd(function(d){ bookmarkStep(d, -1); }),
   clearBookmarks:edCmd(function(d){ var n=d.bm.size; d.bm=new Set(); requestRender(); scheduleSnapshot(); toast(n?'북마크 '+n+'개를 지웠어요':'북마크가 없어요'); }),
   reopenTab:function(){ reopenClosed(); },
@@ -3772,6 +3981,8 @@ var KEYMAP=[
   ['h','북마크·구조'],
   ['toggleBookmark','북마크 켜기/끄기','Ctrl+F2'], ['nextBookmark','다음 북마크','F2'], ['prevBookmark','이전 북마크','Shift+F2'], ['clearBookmarks','북마크 모두 지우기','Ctrl+Shift+F2'],
   ['outline','구조 목록 (함수·메서드·클래스)',['Ctrl+Shift+O','Ctrl+Alt+O']],
+  ['h','접기'],
+  ['foldToggle','현재 블록 접기/펴기','Ctrl+Alt+F'], ['foldAll','모두 접기','Alt+0'], ['unfoldAll','모두 펴기','Alt+Shift+0'],
   ['h','비교'],
   ['compare','두 탭 비교','Ctrl+Alt+C'], ['closeCompare','비교 닫기','Ctrl+Alt+X'], ['nextDiff','다음 차이','F7'], ['prevDiff','이전 차이','Shift+F7'],
   ['h','도구'],
@@ -3814,7 +4025,7 @@ function renderKeys(){
     html.push('<span>'+r[1]+'</span><button class="combo'+(c?'':' empty')+(recording===r[0]?' rec':'')+'" data-rec="'+r[0]+'">'+(recording===r[0]?'키를 누르세요…':(c||'없음'))+'</button>');
   });
   html.push('<div class="h">고정 키</div>');
-  [['글꼴 크기 조절','Ctrl+마우스 휠'],['블록(세로) 편집','Alt+드래그'],['블록 선택 늘리기','Alt+Shift+방향키 · 블록 상태에서 Home/End'],['북마크 켜기/끄기','줄 번호 Ctrl+클릭'],['들여쓰기 / 내어쓰기','Tab · Shift+Tab'],['탭 번호로 가기','Alt+1 ~ 9'],['탭 여러 개 닫기','탭 오른쪽 클릭'],['편집 메뉴','편집기 오른쪽 클릭'],['찾기 창에서 모두 바꾸기','Ctrl+Enter']]
+  [['글꼴 크기 조절','Ctrl+마우스 휠'],['블록(세로) 편집','Alt+드래그'],['블록 선택 늘리기','Alt+Shift+방향키 · 블록 상태에서 Home/End'],['북마크 켜기/끄기','줄 번호 Ctrl+클릭'],['블록 접기/펴기','줄 번호 옆 ▾ ▸ 클릭'],['들여쓰기 / 내어쓰기','Tab · Shift+Tab'],['탭 번호로 가기','Alt+1 ~ 9'],['탭 여러 개 닫기','탭 오른쪽 클릭'],['편집 메뉴','편집기 오른쪽 클릭'],['찾기 창에서 모두 바꾸기','Ctrl+Enter']]
     .forEach(function(x){ html.push('<span>'+x[0]+'</span><kbd>'+x[1]+'</kbd>'); });
   html.push('<div class="note">바꾸려면 오른쪽 키를 누른 다음 새 키 조합을 누르세요. Backspace는 지우기, Esc는 취소예요.<br>'+
     'Ctrl+N, Ctrl+W, Ctrl+Tab은 실행 파일(exe) 버전에서 Notepad++처럼 동작해요. 일반 브라우저 탭에서는 브라우저가 먼저 가져가므로 Ctrl+Alt+N, Ctrl+Alt+W, Ctrl+PageDown을 쓰세요.<br>'+
@@ -3900,10 +4111,11 @@ $('setAutoSave').addEventListener('change', function(){ settings.autoSave=this.c
 $('gutter').addEventListener('wheel', function(e){ if(active){ e.preventDefault(); var sc=scroller(active); sc.scrollTop+=e.deltaY; sc.scrollLeft+=e.deltaX; } }, { passive:false });
 $('gutter').addEventListener('mousedown', function(e){
   if(!active) return; e.preventDefault(); exitCol(active);
-  var rect=this.getBoundingClientRect(), ln=Math.floor((e.clientY-rect.top-PAD_TOP+scroller(active).scrollTop)/LH);
+  var rect=this.getBoundingClientRect(), ln=lineAtRow(active, Math.max(0, Math.min(rowCount(active)-1, Math.floor((e.clientY-rect.top-PAD_TOP+scroller(active).scrollTop)/LH))));
   ln=Math.max(0, Math.min(active.ls.length-1, ln));
+  if(e.target.classList && e.target.classList.contains('fm')){ if(e.target.dataset.ln!=null) toggleFoldAt(active, Number(e.target.dataset.ln)); return; }
   if(e.ctrlKey){ toggleBookmarkAt(active, ln); return; }
-  var s=active.ls[ln], en=ln+1<active.ls.length?active.ls[ln+1]:active.text.length;
+  var fh=foldHeader(active, ln), s=active.ls[ln], en=fh?Math.min(active.text.length, fh.e+1):(ln+1<active.ls.length?active.ls[ln+1]:active.text.length);
   active.ta.focus(); setSel(active, s, en); requestRender(); updateStatus();
 });
 // Ctrl+휠: 화면 전체 대신 글꼴 크기만 키우고 줄인다 (Notepad++ 확대/축소처럼)
@@ -3915,7 +4127,7 @@ $('editorHost').addEventListener('wheel', function(e){
   if(Math.abs(zoomAcc)<40) return;
   CMDS[zoomAcc<0?'fontUp':'fontDown'](); zoomAcc=0;
 }, { passive:false });
-window.addEventListener('resize', requestRender);
+window.addEventListener('resize', function(){ requestRender(); if(findOpen) scheduleFindCount(); });
 window.addEventListener('beforeunload', function(e){ if(snapPending){ snapshot(); e.preventDefault(); e.returnValue=''; } });
 
 // ================= 오른쪽 클릭 메뉴 =================
@@ -3954,7 +4166,7 @@ function openEditCtx(e, d){
     ctxItem('trimLeading','시작 공백 삭제'), ctxItem('trimTrailing','끝 공백 삭제'), ctxItem('trimBoth','시작과 끝 공백 삭제'),
     ctxItem('upper','대문자로'), ctxItem('lower','소문자로'),
     ctxItem('sortAsc','줄 정렬 (오름차순)'), ctxItem('sortDesc','줄 정렬 (내림차순)'), ctxItem('dedupe','중복 줄 제거'), ctxItem('removeBlank','빈 줄 제거'), ctxItem('tabsToSpaces','탭 → 공백'), '<hr>',
-    ctxItem('matchBrace','짝 괄호·블록으로 이동'), ctxItem('toggleBookmark','북마크 켜기/끄기'), ctxItem('colEditor','열 편집')];
+    ctxItem('matchBrace','짝 괄호·블록으로 이동'), ctxItem('foldToggle','블록 접기/펴기'), ctxItem('toggleBookmark','북마크 켜기/끄기'), ctxItem('colEditor','열 편집')];
   showCtx('ctxEdit', e, html.join(''));
 }
 // 메뉴를 눌러도 편집기 포커스와 선택이 그대로 남게 한다 (잘라내기·복사가 선택에 바로 적용되도록)

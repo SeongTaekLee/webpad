@@ -1,0 +1,12 @@
+INSERT INTO ZTAB(A, B, C)
+VALUES (1, 'x', SYSDATE);
+
+UPDATE ZTAB
+   SET B = 'y'
+     , C = NULL
+ WHERE A = 1
+   AND B <> 'z';
+
+DELETE FROM ZTAB
+ WHERE A IN (SELECT A
+               FROM ZOLD);

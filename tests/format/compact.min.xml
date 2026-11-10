@@ -1,0 +1,7 @@
+<root>
+  <a x="1">
+    text here
+  </a>
+  <!-- keep -->
+  <b><![CDATA[ x  y ]]></b>
+</root>

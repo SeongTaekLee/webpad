@@ -1,0 +1,9 @@
+<config>
+  <servers>
+    <server name="a" port="80">
+      <path>/var/www</path>
+    </server>
+    <server name="b" port="8080"/>
+  </servers>
+  <empty></empty>
+</config>

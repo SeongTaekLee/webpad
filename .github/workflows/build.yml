@@ -20,6 +20,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: 포맷터 회귀 테스트
+        run: node tools/test-format.js
+
       - name: WebView2 SDK 받기
         shell: cmd
         run: launcher\get-webview2.cmd
