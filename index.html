@@ -229,7 +229,7 @@
   .csv-tools{ display:flex; align-items:center; gap:4px; padding:5px 8px; border-bottom:1px solid var(--line); background:var(--panel); flex-wrap:wrap; }
   .csv-tools select{ background:var(--bg); border:1px solid var(--line); border-radius:5px; padding:2px 4px; }
   .csv-tools .note{ color:var(--muted); font-size:12px; margin-left:6px; }
-  #csvScroll{ flex:1; overflow:auto; }
+  #csvScroll{ flex:1; overflow:auto; outline:none; }
   #csvTable{ border-collapse:separate; border-spacing:0; font:13px var(--mono); }
   #csvTable th, #csvTable td{ border-right:1px solid var(--line); border-bottom:1px solid var(--line); padding:3px 8px; white-space:pre; max-width:360px; overflow:hidden; text-overflow:ellipsis; vertical-align:top; }
   #csvTable thead th{ position:sticky; top:0; background:var(--panel2); color:var(--muted); font-weight:600; z-index:2; text-align:center; }
@@ -237,7 +237,9 @@
   #csvTable thead th.rn{ z-index:3; }
   #csvTable tr.hdr td:not(.rn){ font-weight:700; background:var(--panel); position:sticky; top:23px; z-index:1; }
   #csvTable td[contenteditable]:focus{ outline:2px solid var(--accent); outline-offset:-2px; background:var(--accent-soft); overflow:visible; max-width:none; }
-  #csvTable tr.selrow td{ background:var(--accent-soft); }
+  #csvTable td.rs{ box-shadow:inset 0 0 0 999px var(--sel); }
+  #csvTable thead th{ cursor:pointer; user-select:none; }
+  #csvTable.ranging{ user-select:none; cursor:cell; }
 
   #statusbar{ display:flex; align-items:center; height:25px; flex:none; background:var(--panel); border-top:1px solid var(--line); font-size:12px; color:var(--muted); padding:0 4px; }
   #statusbar .si{ padding:0 9px; border-right:1px solid var(--line); white-space:nowrap; height:100%; display:flex; align-items:center; }
@@ -535,7 +537,7 @@
           <span class="spacer"></span>
           <button class="tb" data-cmd="toggleGrid">텍스트로 돌아가기</button>
         </div>
-        <div id="csvScroll"><table id="csvTable"></table></div>
+        <div id="csvScroll" tabindex="-1"><table id="csvTable"></table></div>
       </div>
     </section>
   </div>
@@ -3019,7 +3021,7 @@ function parseCsv(text, del){
 }
 function csvField(v, del){ return /["\n\r]/.test(v) || v.indexOf(del)>=0 || /^\s|\s$/.test(v) ? '"'+v.replace(/"/g,'""')+'"' : v; }
 function serializeCsv(rows, del){ return rows.map(function(r){ return r.map(function(v){ return csvField(v, del); }).join(del); }).join('\n'); }
-var grid={ rows:null, cols:0, cell:null, sel:-1, syncTimer:0, trailingNl:false }, GRID_MAX=3000;
+var grid={ rows:null, cols:0, cell:null, sel:-1, syncTimer:0, trailingNl:false, range:null }, GRID_MAX=3000;
 function setGridVisible(on){
   $('editorHost').classList.toggle('hidden', on);
   $('csvHost').classList.toggle('hidden', !on);
@@ -3040,7 +3042,7 @@ function buildGrid(){
   grid.rows=parseCsv(grid.trailingNl?v.slice(0,-1):v, del);
   if(!grid.rows.length) grid.rows=[['']];
   grid.cols=grid.rows.reduce(function(m,r){ return Math.max(m, r.length); }, 1);
-  grid.sel=-1; grid.cell=null;
+  grid.sel=-1; grid.cell=null; grid.range=null;
   $('csvDelim').value=del;
   drawGrid();
 }
@@ -3059,6 +3061,7 @@ function drawGrid(){
   html.push('</tbody>');
   $('csvTable').innerHTML=html.join('');
   $('csvNote').textContent=rows.length.toLocaleString()+'행 × '+grid.cols+'열'+(rows.length>GRID_MAX?' · 처음 '+GRID_MAX+'행만 편집할 수 있어요':'');
+  paintRange();
 }
 function cellPos(td){ return { r:+td.parentNode.dataset.r, c:+td.dataset.c }; }
 $('csvTable').addEventListener('input', function(e){
@@ -3067,14 +3070,120 @@ $('csvTable').addEventListener('input', function(e){
   row[p.c]=td.textContent;
   clearTimeout(grid.syncTimer); grid.syncTimer=setTimeout(flushGrid, 400);
 });
-$('csvTable').addEventListener('focusin', function(e){ var td=e.target.closest('td[data-c]'); if(td) grid.cell=cellPos(td); });
-$('csvTable').addEventListener('click', function(e){
-  var rn=e.target.closest('td.rn'); if(!rn) return;
-  grid.sel=+rn.parentNode.dataset.r;
-  document.querySelectorAll('#csvTable tr.selrow').forEach(function(tr){ tr.classList.remove('selrow'); });
-  rn.parentNode.classList.add('selrow');
-  grid.cell={ r:grid.sel, c:0 };
+$('csvTable').addEventListener('focusin', function(e){ var td=e.target.closest('td[data-c]'); if(td){ grid.cell=cellPos(td); clearRange(); } });
+// ---- 범위 선택: 칸을 끌거나 Shift+클릭, 행 번호·열 머리글 클릭, Ctrl+A. 복사하면 엑셀에 그대로 붙는 탭 구분 글이 된다 ----
+// grid.range = { r0,c0 (시작 칸), r1,c1 (끝 칸) }. 그려지지 않은 행(GRID_MAX 너머)도 범위에 들어갈 수 있다
+function gridBox(){ var g=grid.range; return g ? { r0:Math.min(g.r0,g.r1), r1:Math.max(g.r0,g.r1), c0:Math.min(g.c0,g.c1), c1:Math.max(g.c0,g.c1) } : null; }
+function paintRange(){
+  document.querySelectorAll('#csvTable td.rs').forEach(function(td){ td.classList.remove('rs'); });
+  var b=gridBox(), body=$('csvTable').tBodies[0]; if(!b || !body) return;
+  var trs=body.rows;
+  for(var r=b.r0; r<=b.r1 && r<trs.length; r++){ var cells=trs[r].cells; for(var c=b.c0; c<=b.c1; c++) if(cells[c+1]) cells[c+1].classList.add('rs'); }
+}
+function setRange(r0, c0, r1, c1){
+  grid.range={ r0:r0, c0:c0, r1:r1, c1:c1 }; grid.sel=-1;
+  var ae=document.activeElement; if(ae && ae!==$('csvScroll') && ae.closest && ae.closest('#csvTable')) ae.blur();
+  getSelection().removeAllRanges();
+  if(document.activeElement!==$('csvScroll')) $('csvScroll').focus({ preventScroll:true });
+  paintRange();
+}
+function clearRange(){ if(grid.range){ grid.range=null; paintRange(); } }
+function gridSelectAll(){ setRange(0, 0, grid.rows.length-1, grid.cols-1); }
+function tsvField(v){ return /["\t\n\r]/.test(v) ? '"'+v.replace(/"/g,'""')+'"' : v; }
+function rangeText(){
+  var b=gridBox(), out=[];
+  for(var r=b.r0; r<=b.r1; r++){ var row=grid.rows[r]||[], line=[]; for(var c=b.c0; c<=b.c1; c++) line.push(tsvField(row[c]==null?'':row[c])); out.push(line.join('\t')); }
+  return out.join('\n');
+}
+function rangeClear(){
+  var b=gridBox(); if(!b) return;
+  gridEdit(function(){ for(var r=b.r0; r<=b.r1; r++){ var row=grid.rows[r]; if(row) for(var c=b.c0; c<=b.c1 && c<row.length; c++) row[c]=''; } });
+}
+// 붙여넣기: 탭·줄바꿈으로 나뉜 글(엑셀 범위)을 선택 범위의 왼쪽 위 칸(없으면 at)부터 칸칸이 채운다. 모자라는 행·열은 늘린다
+function gridPaste(text, at){
+  text=text.replace(/\r\n?/g, '\n'); if(text.endsWith('\n')) text=text.slice(0, -1);
+  var data=parseCsv(text, '\t'); if(!data.length) data=[['']];
+  var b=gridBox(), r0=b?b.r0:at.r, c0=b?b.c0:at.c, w=data.reduce(function(m,r){ return Math.max(m, r.length); }, 1);
+  var one=data.length===1 && w===1;
+  gridEdit(function(){
+    function put(r, c, v){ while(grid.rows.length<=r) grid.rows.push(new Array(grid.cols).fill('')); var row=grid.rows[r]; while(row.length<=c) row.push(''); row[c]=v; }
+    if(one && b){ for(var r=b.r0; r<=b.r1; r++) for(var c=b.c0; c<=b.c1; c++) put(r, c, data[0][0]||''); }
+    else for(var i=0;i<data.length;i++) for(var j=0;j<data[i].length;j++) put(r0+i, c0+j, data[i][j]);
+  });
+  if(!(one && b)) setRange(r0, c0, r0+data.length-1, c0+w-1);
+}
+var gdrag=null;
+$('csvTable').addEventListener('mousedown', function(e){
+  if(e.button!==0 || !grid.rows) return;
+  var th=e.target.closest('thead th'), rn=e.target.closest('td.rn'), td=e.target.closest('td[data-c]'), last=grid.rows.length-1, g=grid.range;
+  if(th){
+    e.preventDefault();
+    if(th.classList.contains('rn')){ gridSelectAll(); return; }
+    var c=th.cellIndex-1;
+    setRange(0, e.shiftKey && g ? g.c0 : c, last, c); gdrag={ mode:'col', c:grid.range.c0 };
+  }else if(rn){
+    e.preventDefault();
+    var r=+rn.parentNode.dataset.r;
+    setRange(e.shiftKey && g ? g.r0 : r, 0, r, grid.cols-1); gdrag={ mode:'row', r:grid.range.r0 };
+    grid.sel=r; grid.cell={ r:r, c:0 };
+  }else if(td){
+    var p=cellPos(td);
+    if(e.shiftKey && (g || grid.cell)){ e.preventDefault(); var a=g ? { r:g.r0, c:g.c0 } : grid.cell; setRange(a.r, a.c, p.r, p.c); return; }
+    clearRange(); grid.cell=p; gdrag={ mode:'cell', r:p.r, c:p.c, on:false };
+  }
 });
+document.addEventListener('mousemove', function(e){
+  if(!gdrag) return;
+  if(!(e.buttons&1)){ gdrag=null; $('csvTable').classList.remove('ranging'); return; }
+  var t=e.target.closest ? e.target : null; if(!t) return;
+  if(gdrag.mode==='cell'){
+    var td=t.closest('#csvTable td[data-c]'); if(!td) return;
+    var p=cellPos(td);
+    if(!gdrag.on && p.r===gdrag.r && p.c===gdrag.c) return; // 한 칸 안에서 끄는 것은 글자 선택
+    gdrag.on=true; $('csvTable').classList.add('ranging'); e.preventDefault();
+    setRange(gdrag.r, gdrag.c, p.r, p.c);
+  }else if(gdrag.mode==='row'){
+    var tr=t.closest('#csvTable tr[data-r]'); if(tr) setRange(gdrag.r, 0, +tr.dataset.r, grid.cols-1);
+  }else{
+    var cell=t.closest('#csvTable td[data-c], #csvTable thead th:not(.rn)'); if(cell) setRange(0, gdrag.c, grid.rows.length-1, cell.cellIndex-1);
+  }
+});
+document.addEventListener('mouseup', function(){ if(gdrag){ gdrag=null; $('csvTable').classList.remove('ranging'); } });
+$('csvHost').addEventListener('copy', function(e){
+  if(!grid.range) return;
+  var b=gridBox(); e.preventDefault(); grid.copied=true; e.clipboardData.setData('text/plain', rangeText());
+  toast((b.r1-b.r0+1).toLocaleString()+'행 × '+(b.c1-b.c0+1)+'열을 복사했어요');
+});
+$('csvHost').addEventListener('cut', function(e){
+  if(!grid.range) return;
+  e.preventDefault(); grid.copied=true; e.clipboardData.setData('text/plain', rangeText()); rangeClear();
+});
+$('csvHost').addEventListener('paste', function(e){
+  var inScroll=e.target.closest && e.target.closest('#csvScroll'); if(!inScroll || !grid.rows) return;
+  var text=e.clipboardData.getData('text/plain'), td=e.target.closest('td[data-c]');
+  if(!grid.range && !(td && /[\t\n]/.test(text.replace(/\r?\n$/, '')))) return; // 한 칸짜리 글은 칸 안에 그대로 붙인다
+  e.preventDefault(); gridPaste(text, td ? cellPos(td) : null);
+});
+$('csvHost').addEventListener('keydown', function(e){
+  if(!e.target.closest('#csvScroll') || !grid.rows) return;
+  if((e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && e.code==='KeyA'){ e.preventDefault(); gridSelectAll(); return; }
+  if(!grid.range) return;
+  if((e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && (e.code==='KeyC' || e.code==='KeyX')){ var cut=e.code==='KeyX'; grid.copied=false; setTimeout(function(){ if(!grid.copied && grid.range) gridCopyKey(cut); }, 0); return; }
+  if(e.key==='Escape') clearRange();
+  else if(e.key==='Delete' || e.key==='Backspace'){ e.preventDefault(); rangeClear(); }
+});
+// Ctrl+C / Ctrl+X: 글자 선택이 없는 자리에서는 브라우저가 copy 이벤트를 안 줄 수 있다. 이벤트가 안 왔으면 클립보드에 직접 쓴다
+function gridCopyKey(cut){
+  var t=rangeText(), b=gridBox();
+  function done(){ toast((b.r1-b.r0+1).toLocaleString()+'행 × '+(b.c1-b.c0+1)+'열을 '+(cut?'잘라냈어요':'복사했어요')); if(cut) rangeClear(); }
+  function viaTextarea(){
+    var x=document.createElement('textarea'); x.value=t; x.style.cssText='position:fixed;left:0;top:0;opacity:0';
+    document.body.appendChild(x); x.select(); var ok=false; try{ ok=document.execCommand('copy'); }catch(err){}
+    x.remove(); $('csvScroll').focus({ preventScroll:true });
+    if(ok) done(); else toast('복사하지 못했어요');
+  }
+  if(navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(t).then(done, viaTextarea); else viaTextarea();
+}
 $('csvTable').addEventListener('keydown', function(e){
   var td=e.target.closest('td[data-c]'); if(!td) return;
   if(e.key==='Enter' && !e.altKey){
@@ -3100,6 +3209,7 @@ var CSV_OPS={
   csvDelCol:function(){ if(!grid.cell) return toast('지울 열의 칸을 먼저 눌러주세요'); if(grid.cols<=1) return;
     var c=grid.cell.c; gridEdit(function(){ grid.rows.forEach(function(r){ r.splice(c,1); }); }); grid.cell=null; }
 };
+Object.keys(CSV_OPS).forEach(function(k){ var f=CSV_OPS[k]; CSV_OPS[k]=function(){ grid.range=null; return f(); }; }); // 행·열을 넣고 빼면 범위 선택은 푼다
 $('csvDelim').addEventListener('change', function(){
   var d=active; flushGrid();
   var rows=parseCsv(d.text, d.delim||','); d.delim=this.value;
