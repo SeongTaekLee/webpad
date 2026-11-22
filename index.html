@@ -1908,7 +1908,13 @@ function renderCol(d, first, last, st, sl){
   var b=colBox(d), html=[], from=Math.max(first,b.top), to=Math.min(last,b.bot);
   for(var i=from;i<=to;i++){
     var top=PAD_TOP+i*LH;
-    if(b.xb-b.xa>1) html.push('<div style="top:'+top+'px;left:'+(PAD_LEFT+b.xa)+'px;width:'+(b.xb-b.xa)+'px"></div>');
+    if(b.xb===Infinity){
+      // 줄 끝까지 잡힌 블록: 줄마다 자기 줄 끝까지만 칠하고, 그 끝에 커서 막대를 둔다
+      var tl=lineText(d,i), xe=xOf(tl, tl.length), xs=Math.min(b.xa, xe);
+      if(xe-xs>1) html.push('<div style="top:'+top+'px;left:'+(PAD_LEFT+xs)+'px;width:'+(xe-xs)+'px"></div>');
+      html.push('<div class="bar" style="top:'+top+'px;left:'+(PAD_LEFT+xe-1)+'px"></div>');
+    }
+    else if(b.xb-b.xa>1) html.push('<div style="top:'+top+'px;left:'+(PAD_LEFT+b.xa)+'px;width:'+(b.xb-b.xa)+'px"></div>');
     else{ var t=lineText(d,i); html.push('<div class="bar" style="top:'+top+'px;left:'+(PAD_LEFT+xOf(t, idxAt(t,b.xa))-1)+'px"></div>'); }
   }
   colLayer.innerHTML=html.join('');
@@ -1931,7 +1937,10 @@ function onEditorMouse(e, d){
   var up=function(){ window.removeEventListener('mousemove', move); window.removeEventListener('mouseup', up); };
   window.addEventListener('mousemove', move); window.addEventListener('mouseup', up);
 }
-function colExtend(d, k){
+// End는 블록 끝을 '줄마다 자기 줄 끝'으로 보낸다. 줄 길이가 제각각이라 '무한히 오른쪽'(Infinity)으로 적어 두고,
+// 줄마다 읽을 때 자기 줄 끝으로 잘라 쓴다 (Notepad++에서 블록을 잡고 End를 누른 것처럼 들쭉날쭉하게 잡힌다)
+// move 가 참이면 Home/End 가 선택 없이 커서만 옮긴다 (시작 칸도 같이 옮겨서 폭 0 블록이 된다)
+function colExtend(d, k, move){
   if(!d.col){
     var a=sA(d), ln=lineOf(d.ls,a), x=xOf(lineText(d,ln), a-d.ls[ln]);
     d.col={ al:ln, ax:x, hl:ln, hx:x };
@@ -1939,14 +1948,12 @@ function colExtend(d, k){
   var c=d.col;
   if(k==='ArrowUp') c.hl=Math.max(0, c.hl-1);
   else if(k==='ArrowDown') c.hl=Math.min(d.ls.length-1, c.hl+1);
-  else if(k==='Home') c.hx=0;
-  else if(k==='End'){
-    // 블록 안 가장 긴 줄의 끝까지. 짧은 줄은 자기 줄 끝까지만 잡힌다 (Notepad++의 Alt+Shift+End처럼)
-    var mx=0; for(var j=Math.min(c.al,c.hl); j<=Math.max(c.al,c.hl); j++){ var lt=lineText(d,j); mx=Math.max(mx, xOf(lt, lt.length)); }
-    c.hx=mx;
-  }
+  else if(k==='Home'){ c.hx=0; if(move) c.ax=0; }
+  else if(k==='End'){ c.hx=Infinity; if(move) c.ax=Infinity; }
   else{
-    var t=lineText(d, c.hl), i=idxAt(t, c.hx);
+    var t=lineText(d, c.hl);
+    if(c.hx===Infinity) c.hx=xOf(t, t.length); // 줄 끝 상태에서 좌우로 움직이면 지금 줄의 끝에서부터 센다
+    var i=idxAt(t, c.hx);
     if(k==='ArrowLeft') c.hx=i>0?xOf(t,i-1):Math.max(0, c.hx-CW);
     else c.hx=i<t.length?xOf(t,i+1):c.hx+CW;
   }
@@ -1965,6 +1972,8 @@ function colApply(d, fn, rows){
   d.colBusy=true;
   try{ edit(d, s, e, out.join('\n')); } finally { d.colBusy=false; }
   var nx=xOf(out[0], caret0);
+  // 줄 끝에 선 커서들은 고친 뒤에도 줄마다 자기 줄 끝에 둔다 (첫 줄 칸에 맞추면 긴 줄에서는 줄 가운데로 들어간다)
+  if((keep.ax===Infinity || keep.hx===Infinity) && caret0===out[0].length) nx=Infinity;
   setCol(d, { al:keep.al, hl:keep.hl, ax:nx, hx:nx });
 }
 function colType(d, str){ colApply(d, function(t,i1,i2){ return [t.slice(0,i1)+str+t.slice(i2), i1+str.length]; }); }
@@ -2012,8 +2021,9 @@ function onEditorKey(e, d){
   if(d.big && bigKey(e, d)) return;
   if(alt && sh && !ctrl && /^(Arrow|Home|End)/.test(k)){ e.preventDefault(); colExtend(d, k); return; }
   if(d.col){
-    // 블록을 잡은 채 End/Home을 누르면 블록이 줄 끝/줄 시작까지 늘어난다
-    if(!ctrl && !alt && (k==='End' || k==='Home')){ e.preventDefault(); colExtend(d, k); return; }
+    // 블록을 잡은 채 End: 커서들이 줄마다 자기 줄 끝으로 간다 (Home은 줄 시작). Shift를 같이 누르면 거기까지 선택된다
+    // Alt+드래그 직후 Alt를 아직 누르고 있어도 똑같이 동작한다
+    if(!ctrl && (k==='End' || k==='Home')){ e.preventDefault(); colExtend(d, k, !sh); return; }
     if(e.isComposing || k==='Process' || k==='Shift' || k==='Alt' || k==='Control' || k==='Meta' || k==='CapsLock') return;
     if(k==='Escape'){ e.preventDefault(); exitCol(d); return; }
     if(ctrl && /^(KeyC|KeyX|KeyV)$/.test(e.code)) return;
@@ -4135,7 +4145,7 @@ function renderKeys(){
     html.push('<span>'+r[1]+'</span><button class="combo'+(c?'':' empty')+(recording===r[0]?' rec':'')+'" data-rec="'+r[0]+'">'+(recording===r[0]?'키를 누르세요…':(c||'없음'))+'</button>');
   });
   html.push('<div class="h">고정 키</div>');
-  [['글꼴 크기 조절','Ctrl+마우스 휠'],['블록(세로) 편집','Alt+드래그'],['블록 선택 늘리기','Alt+Shift+방향키 · 블록 상태에서 Home/End'],['북마크 켜기/끄기','줄 번호 Ctrl+클릭'],['블록 접기/펴기','줄 번호 옆 ▾ ▸ 클릭'],['들여쓰기 / 내어쓰기','Tab · Shift+Tab'],['탭 번호로 가기','Alt+1 ~ 9'],['탭 여러 개 닫기','탭 오른쪽 클릭'],['편집 메뉴','편집기 오른쪽 클릭'],['찾기 창에서 모두 바꾸기','Ctrl+Enter']]
+  [['글꼴 크기 조절','Ctrl+마우스 휠'],['블록(세로) 편집','Alt+드래그'],['블록 선택 늘리기','Alt+Shift+방향키 · 블록 상태에서 Shift+Home/End (End는 줄마다 자기 줄 끝까지)'],['블록 커서 옮기기','블록 상태에서 Home/End (선택 없이 줄 시작/줄 끝으로)'],['북마크 켜기/끄기','줄 번호 Ctrl+클릭'],['블록 접기/펴기','줄 번호 옆 ▾ ▸ 클릭'],['들여쓰기 / 내어쓰기','Tab · Shift+Tab'],['탭 번호로 가기','Alt+1 ~ 9'],['탭 여러 개 닫기','탭 오른쪽 클릭'],['편집 메뉴','편집기 오른쪽 클릭'],['찾기 창에서 모두 바꾸기','Ctrl+Enter']]
     .forEach(function(x){ html.push('<span>'+x[0]+'</span><kbd>'+x[1]+'</kbd>'); });
   html.push('<div class="note">바꾸려면 오른쪽 키를 누른 다음 새 키 조합을 누르세요. Backspace는 지우기, Esc는 취소예요.<br>'+
     'Ctrl+N, Ctrl+W, Ctrl+Tab은 실행 파일(exe) 버전에서 Notepad++처럼 동작해요. 일반 브라우저 탭에서는 브라우저가 먼저 가져가므로 Ctrl+Alt+N, Ctrl+Alt+W, Ctrl+PageDown을 쓰세요.<br>'+
