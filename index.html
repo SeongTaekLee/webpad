@@ -1564,6 +1564,20 @@ function edit(d, s, e, text, selS, selE){
   if(!ok){ ta.setRangeText(text, ls_, le_, 'end'); onInput(d, null); }
   d.undoSeal=true;
   if(selS!=null) setSel(d, selS, selE==null?selS:selE);
+  followCaret(d);
+}
+// 편집기가 직접 글을 넣으면(Enter, Tab, 줄 명령 등) 브라우저가 화면을 커서 쪽으로 옮겨 주지 않는다.
+// 커서가 화면 밖으로 나갔으면 보일 만큼만 스크롤한다 (가운데로 끌어오지 않는다)
+function followCaret(d){
+  if(d!==active || d.grid) return;
+  if(d.big) sizeBigHeight(d);
+  var pos=d.ta.selectionDirection==='backward' ? sA(d) : sB(d), line=lineOf(d.ls, pos), sc=scroller(d);
+  var H=sc.clientHeight||codeWrap.clientHeight, W=sc.clientWidth||codeWrap.clientWidth, y=rowOf(d, line)*LH;
+  if(y<sc.scrollTop) sc.scrollTop=y;
+  else if(y+LH+PAD_TOP*2>sc.scrollTop+H) sc.scrollTop=y+LH+PAD_TOP*2-H;
+  var t=lineText(d, line), x=xOf(t, pos-d.ls[line]);
+  if(x<sc.scrollLeft) sc.scrollLeft=Math.max(0, x-40);
+  else if(x+PAD_LEFT+40>sc.scrollLeft+W) sc.scrollLeft=x+PAD_LEFT+40-W;
 }
 
 // ================= 대용량 모드 =================
