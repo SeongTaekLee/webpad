@@ -1551,7 +1551,8 @@ document.addEventListener('selectionchange', function(){
 function edit(d, s, e, text, selS, selE){
   var ta=d.ta;
   if(s===e && text==='') return;
-  if(tooWide(d, s, e)){ setValue(d, d.text.slice(0,s)+text+d.text.slice(e)); setSel(d, selS!=null?selS:s+text.length, selE!=null?selE:(selS!=null?selS:s+text.length)); return; }
+  // 큰 덩어리는 execCommand 로 넣으면 크기의 제곱꼴로 느려진다 (15만 자에 7초). 바로 갈아 끼운다
+  if(tooWide(d, s, e) || text.length>EDIT_DIRECT || e-s>EDIT_DIRECT){ setValue(d, d.text.slice(0,s)+text+d.text.slice(e)); setSel(d, selS!=null?selS:s+text.length, selE!=null?selE:(selS!=null?selS:s+text.length)); return; }
   d.vsel=null;
   revealRange(d, s, e);
   ensureWindow(d, lineOf(d.ls,s), lineOf(d.ls,e), 2);
@@ -1585,7 +1586,7 @@ function followCaret(d){
 // 입력칸에는 지금 보는 곳 근처 WIN_LINES 줄만 올린다. 위아래 여백(padding)으로 전체 높이를 흉내 낸다.
 // 브라우저 입력칸은 한글 조합 중 커서 앞 줄 수에 비례해 느려진다 (4천 줄 뒤에서 한 글자에 0.4초).
 // 그래서 줄이 조금만 많아도 커서 근처 구간만 올리고, 커서는 구간 위쪽 CARET_MAX 줄 안에 둔다.
-var BIG_LINES=600, WIN_LINES=1500, CARET_TOP=150, CARET_MAX=350, SEL_MAX=8000, HUGE_LINES=15000;
+var BIG_LINES=600, WIN_LINES=1500, CARET_TOP=150, CARET_MAX=350, SEL_MAX=8000, HUGE_LINES=15000, EDIT_DIRECT=20000;
 function placeAt(d, la, lb){ var w0=Math.max(0, la-CARET_TOP); setWindow(d, w0, Math.max(w0+WIN_LINES, (lb==null?la:lb)+200)); }
 // vsel: 구간보다 큰 가상 선택(전체 선택 등), gsel: 구간 밖으로 스크롤했을 때 기억해 둔 커서
 function sA(d){ return d.vsel ? d.vsel.s : d.gsel ? d.gsel.s : toDoc(d, d.ta.selectionStart); }
@@ -2235,7 +2236,9 @@ function replaceAll(){
   findRe.lastIndex=0;
   var out=d.text.replace(findRe, function(m0){ n++; return single ? m0.replace(single, rrep) : plain; });
   if(!n){ toast('바꿀 내용이 없어요'); return; }
-  setAllText(d, out); curMatch=null; updateFindCount();
+  // 문서 전체를 입력칸에 다시 쳐 넣으면(execCommand) 수천 줄에서 몇 초씩 걸린다. 글을 바로 갈아 끼우고 커서는 제자리에 둔다
+  var keep=sA(d); setValue(d, out); setSel(d, Math.min(keep, out.length));
+  curMatch=null; updateFindCount(); updateStatus();
   toast(n.toLocaleString()+'개를 바꿨어요');
   $('replaceInput').focus();
 }
