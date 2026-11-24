@@ -4221,7 +4221,9 @@ document.addEventListener('keydown', function(e){
 document.addEventListener('click', function(e){
   if(!e.target.closest('#ctxTab')) ctxDoc=null;
   var m=e.target.closest('[data-menu]');
-  document.querySelectorAll('.menu.open').forEach(function(x){ if(!m || x.id!==m.dataset.menu) x.classList.remove('open'); });
+  // 메뉴 안의 고르는 칸(글꼴·테마·탭 크기 목록, 체크 상자)을 누를 때는 그 메뉴를 닫지 않는다. 닫으면 목록이 펼쳐지자마자 사라진다
+  var row=e.target.closest('.menu .row'), keep=row ? row.closest('.menu') : null;
+  document.querySelectorAll('.menu.open').forEach(function(x){ if(x!==keep && (!m || x.id!==m.dataset.menu)) x.classList.remove('open'); });
   if(m){ $(m.dataset.menu).classList.toggle('open'); return; }
   var c=e.target.closest('[data-cmd]');
   if(c && CMDS[c.dataset.cmd]){
