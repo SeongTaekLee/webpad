@@ -10,6 +10,7 @@ if not exist dist mkdir dist
 "%CSC%" /nologo /codepage:65001 /optimize+ /target:winexe /platform:anycpu ^
   /win32icon:launcher\webpad.ico ^
   /reference:System.Windows.Forms.dll /reference:System.Drawing.dll /reference:System.Web.Extensions.dll ^
+  /reference:System.IO.Compression.dll /reference:System.IO.Compression.FileSystem.dll ^
   /reference:%WV%\lib\net462\Microsoft.Web.WebView2.Core.dll /reference:%WV%\lib\net462\Microsoft.Web.WebView2.WinForms.dll ^
   /resource:%WV%\lib\net462\Microsoft.Web.WebView2.Core.dll,lib/Microsoft.Web.WebView2.Core.dll ^
   /resource:%WV%\lib\net462\Microsoft.Web.WebView2.WinForms.dll,lib/Microsoft.Web.WebView2.WinForms.dll ^

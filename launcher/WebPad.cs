@@ -10,6 +10,8 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.Drawing;
 using System.IO;
+using System.IO.Compression;
+using System.Net;
 using System.Reflection;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
@@ -26,12 +28,14 @@ using Microsoft.Web.WebView2.WinForms;
 [assembly: AssemblyTitle("WebPad")]
 [assembly: AssemblyProduct("WebPad")]
 [assembly: AssemblyDescription("웹패드 - 가벼운 코드 편집기")]
-[assembly: AssemblyVersion("1.4.6.0")]
-[assembly: AssemblyFileVersion("1.4.6.0")]
+[assembly: AssemblyVersion("1.4.7.0")]
+[assembly: AssemblyFileVersion("1.4.7.0")]
 
 static class Program
 {
     public static string Data, AppDir, Key;
+    public static bool Restart; // 업데이트로 exe 를 바꾼 뒤: 창을 닫으면 새 exe 를 켠다
+    public const string Repo = "https://github.com/SeongTaekLee/webpad";
 
     [STAThread]
     static int Main(string[] args)
@@ -42,7 +46,12 @@ static class Program
             Data = DataDir();
             AppDir = Path.Combine(Data, "app");
             Key = "WebPad_" + ((uint)Data.ToLowerInvariant().GetHashCode()).ToString("x8");
-            string file = args.Length > 0 ? Path.GetFullPath(args[0]) : null;
+            // 업데이트 직후 새 exe 로 다시 켜진 경우: 앞의 웹패드가 완전히 끝나기를 잠깐 기다린다
+            bool updated = args.Length > 0 && args[0] == "--updated";
+            if (updated) Thread.Sleep(900);
+            string file = args.Length > 0 && !updated ? Path.GetFullPath(args[0]) : null;
+            string exe = Assembly.GetExecutingAssembly().Location;
+            try { if (File.Exists(exe + ".old")) File.Delete(exe + ".old"); } catch (Exception) { }
 
             bool first;
             Mutex mutex = new Mutex(true, Key, out first);
@@ -54,6 +63,12 @@ static class Program
             if (!HasWebView2()) { LaunchBrowser(); return 0; }
             Run(file);
             GC.KeepAlive(mutex);
+            if (Restart)
+            {
+                try { mutex.ReleaseMutex(); } catch (Exception) { }
+                mutex.Dispose();
+                Process.Start(exe, "--updated");
+            }
         }
         catch (Exception ex)
         {
@@ -145,6 +160,83 @@ static class Program
         if (a.Length != b.Length) return false;
         for (int i = 0; i < a.Length; i++) if (a[i] != b[i]) return false;
         return true;
+    }
+
+    // ---- 업데이트 ----
+    static HttpWebRequest Http(string url)
+    {
+        ServicePointManager.SecurityProtocol |= (SecurityProtocolType)3072; // TLS 1.2
+        HttpWebRequest r = (HttpWebRequest)WebRequest.Create(url);
+        r.UserAgent = "WebPad-Updater";
+        r.Timeout = 15000;
+        r.ReadWriteTimeout = 30000;
+        try { if (r.Proxy != null) r.Proxy.Credentials = CredentialCache.DefaultCredentials; } catch (Exception) { }
+        return r;
+    }
+
+    // 최신 릴리스 주소(/releases/latest)가 넘겨 주는 곳(/releases/tag/v1.2.3)에서 버전 번호만 읽는다
+    public static string LatestVersion()
+    {
+        using (HttpWebResponse res = (HttpWebResponse)Http(Repo + "/releases/latest").GetResponse())
+        {
+            Match m = Regex.Match(res.ResponseUri.AbsolutePath, @"/releases/tag/v(\d+\.\d+\.\d+)$");
+            if (!m.Success) throw new Exception("최신 버전을 찾지 못했어요");
+            return m.Groups[1].Value;
+        }
+    }
+
+    // 새 버전 zip 을 받아 exe 를 꺼내고, 지금 exe 를 .old 로 밀어 둔 뒤 그 자리에 놓는다 (실행 중인 exe 는 지울 수 없지만 이름은 바꿀 수 있다)
+    public static void ApplyUpdate(string version)
+    {
+        if (version == null || !Regex.IsMatch(version, @"^\d+\.\d+\.\d+$")) throw new Exception("버전이 올바르지 않아요");
+        string dir = Path.Combine(Data, "update");
+        if (Directory.Exists(dir)) Directory.Delete(dir, true);
+        Directory.CreateDirectory(dir);
+        string zip = Path.Combine(dir, "WebPad.zip"), fresh = Path.Combine(dir, "WebPad.exe");
+        using (HttpWebResponse res = (HttpWebResponse)Http(Repo + "/releases/download/v" + version + "/WebPad.zip").GetResponse())
+        using (Stream src = res.GetResponseStream())
+        using (FileStream dst = File.Create(zip))
+        {
+            byte[] buf = new byte[81920];
+            long total = 0;
+            int n;
+            while ((n = src.Read(buf, 0, buf.Length)) > 0)
+            {
+                total += n;
+                if (total > 100L * 1024 * 1024) throw new Exception("받은 파일이 너무 커요");
+                dst.Write(buf, 0, n);
+            }
+        }
+        bool found = false;
+        using (ZipArchive za = ZipFile.OpenRead(zip))
+            foreach (ZipArchiveEntry en in za.Entries)
+                if (string.Equals(en.Name, "WebPad.exe", StringComparison.OrdinalIgnoreCase))
+                {
+                    using (Stream s = en.Open())
+                    using (FileStream o = File.Create(fresh)) s.CopyTo(o);
+                    found = true;
+                    break;
+                }
+        if (!found) throw new Exception("받은 파일에 WebPad.exe 가 없어요");
+        FileVersionInfo vi = FileVersionInfo.GetVersionInfo(fresh);
+        if (vi.ProductName != "WebPad" || vi.FileVersion == null || !vi.FileVersion.StartsWith(version + "."))
+            throw new Exception("받은 파일의 버전이 달라요 (" + vi.FileVersion + ")");
+
+        string exe = Assembly.GetExecutingAssembly().Location, old = exe + ".old";
+        try
+        {
+            if (File.Exists(old)) File.Delete(old);
+            File.Move(exe, old);
+        }
+        catch (Exception ex) { throw new Exception("실행 파일을 바꿀 수 없어요 (" + ex.Message + ")"); }
+        try { File.Move(fresh, exe); }
+        catch (Exception ex)
+        {
+            try { File.Move(old, exe); } catch (Exception) { }
+            throw new Exception("새 실행 파일을 놓지 못했어요 (" + ex.Message + ")");
+        }
+        try { Directory.Delete(dir, true); } catch (Exception) { }
+        Restart = true;
     }
 
     public static string Inbox { get { return Path.Combine(Data, "inbox"); } }
@@ -333,6 +425,10 @@ class MainForm : Form
             allowClose = true;
             Close();
         }
+        else if (type == "restart")
+        {
+            Close(); // 닫는 과정에서 임시 저장을 마치고, Main 이 새 exe 를 켠다
+        }
         else if (m.ContainsKey("id"))
         {
             // 파일 다루기는 브라우저 대신 윈도우가 직접 한다 (브라우저는 C:\ 나 사용자 폴더 같은 곳을 막는다)
@@ -340,6 +436,7 @@ class MainForm : Form
             reply["type"] = "reply";
             reply["id"] = m["id"];
             if (type == "grep") { GrepAsync(m, reply); return; }
+            if (type == "checkUpdate" || type == "applyUpdate") { UpdateAsync(type, m, reply); return; }
             try
             {
                 if (type == "dropPaths") DropPaths(e, reply); else HostCall(type, m, reply);
@@ -376,6 +473,22 @@ class MainForm : Form
         System.Threading.Tasks.Task.Factory.StartNew(() =>
         {
             try { Grep(path, pattern, ignoreCase, filter, showHidden, max, reply); reply["ok"] = true; }
+            catch (Exception ex) { reply["ok"] = false; reply["error"] = ex.Message; }
+            try { BeginInvoke((Action)(() => { if (web.CoreWebView2 != null) web.CoreWebView2.PostWebMessageAsJson(json.Serialize(reply)); })); } catch (Exception) { }
+        });
+    }
+
+    // 새 버전 확인·받기: 네트워크를 쓰므로 다른 스레드에서 돌린다
+    void UpdateAsync(string type, Dictionary<string, object> m, Dictionary<string, object> reply)
+    {
+        string version = m.ContainsKey("version") ? m["version"] as string : null;
+        System.Threading.Tasks.Task.Factory.StartNew(() =>
+        {
+            try
+            {
+                if (type == "checkUpdate") reply["version"] = Program.LatestVersion(); else Program.ApplyUpdate(version);
+                reply["ok"] = true;
+            }
             catch (Exception ex) { reply["ok"] = false; reply["error"] = ex.Message; }
             try { BeginInvoke((Action)(() => { if (web.CoreWebView2 != null) web.CoreWebView2.PostWebMessageAsJson(json.Serialize(reply)); })); } catch (Exception) { }
         });

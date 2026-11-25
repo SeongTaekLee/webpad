@@ -250,6 +250,10 @@
   #statusbar select.si option{ background:var(--bg); color:var(--ink); }
   #statusbar .path{ flex:1; overflow:hidden; text-overflow:ellipsis; min-width:0; }
   #statusbar #stVer.err{ color:#d9363e; font-weight:700; }
+  #statusbar #stUpd{ color:var(--accent, #2b7cd3); font-weight:700; }
+  #updModal p{ margin:6px 0; line-height:1.6; }
+  #updModal .btns{ display:flex; gap:8px; justify-content:flex-end; margin-top:14px; flex-wrap:wrap; }
+  #updMsg.err{ color:#d9363e; }
   #logText{ width:100%; height:52vh; box-sizing:border-box; resize:vertical; padding:8px 10px; border:1px solid var(--line); border-radius:6px; background:var(--panel); color:var(--ink); font:12px/1.5 var(--mono); white-space:pre; }
   #snapState.ok{ color:var(--ok); }
   #stMode{ color:var(--accent); font-weight:700; }
@@ -430,6 +434,8 @@
         <hr>
         <button data-cmd="help">단축키 보기·바꾸기 <kbd data-key="help"></kbd></button>
         <button data-cmd="errLog" title="화면이 이상하게 보일 때 눌러서 내용을 복사해 두면 원인을 찾을 수 있어요">버전·오류 기록 보기</button>
+        <label class="row" id="updRow" title="하루에 한 번 GitHub 에서 최신 버전 번호만 확인해요. 문서 내용은 보내지 않아요">새 버전 자동 확인 <input type="checkbox" id="setUpd"></label>
+        <button id="updCheck" data-cmd="checkUpdate">업데이트 확인</button>
         <button data-cmd="importUdl">Notepad++ 사용자 언어(XML) 불러오기</button>
         <button data-cmd="clearUdl">불러온 사용자 언어 지우기</button>
       </div>
@@ -561,6 +567,7 @@
     </select>
     <select class="si" id="stLang" title="문법"></select>
     <span class="si" id="snapState">임시 저장 대기</span>
+    <button class="si hidden" id="stUpd" title="새 버전이 나왔어요. 누르면 업데이트할 수 있어요"></button>
     <button class="si" id="stVer" title="버전. 누르면 오류 기록과 진단 정보를 볼 수 있어요"></button>
   </div>
 </div>
@@ -617,6 +624,13 @@
   <textarea id="logText" readonly spellcheck="false"></textarea>
 </div></div>
 
+<div class="modal-bg hidden" id="updModal"><div class="modal" style="width:min(460px,94vw)">
+  <h3 id="updTitle">업데이트</h3>
+  <p id="updText"></p>
+  <p id="updMsg" class="note"></p>
+  <div class="btns"><button class="tb" id="updNotes">바뀐 점 보기</button><button class="tb" id="updLater">나중에</button><button class="tb" id="updGo">지금 업데이트</button></div>
+</div></div>
+
 <div id="toast"></div>
 <div id="dropHint">여기에 놓으면 파일이 열려요</div>
 <input type="file" id="fileInput" multiple class="hidden">
@@ -628,7 +642,7 @@
 var $=function(id){ return document.getElementById(id); };
 var FS_API=!!window.showOpenFilePicker;
 var HOST=!!(window.chrome && window.chrome.webview);
-var APP_VERSION='1.4.6'; // 배포할 때 launcher/WebPad.cs 의 AssemblyVersion, sw.js 의 CACHE 와 함께 올린다 (tools/test-format.js 가 맞는지 확인)
+var APP_VERSION='1.4.7'; // 배포할 때 launcher/WebPad.cs 의 AssemblyVersion, sw.js 의 CACHE 와 함께 올린다 (tools/test-format.js 가 맞는지 확인)
 
 // ================= 오류 기록 =================
 // 오류가 나면 브라우저 저장소에 남겨 두고, 상태 표시줄의 버전을 누르면 볼 수 있다. 문서 내용·파일 이름은 적지 않는다.
@@ -690,7 +704,7 @@ var HL_LIMIT=4000;
 var PAD_TOP=4, PAD_LEFT=12;
 
 // ================= 설정 =================
-var settings={ theme:'', font:'nanum', fs:14, tab:4, spaces:false, autoSave:false, showHidden:false, showWs:false, trimSave:false, finalNl:false, treeTextOnly:true, treeExt:'', side:250, sideOpen:true, keys:{} };
+var settings={ theme:'', font:'nanum', fs:14, tab:4, spaces:false, autoSave:false, updAuto:true, updAt:0, updLatest:'', showHidden:false, showWs:false, trimSave:false, finalNl:false, treeTextOnly:true, treeExt:'', side:250, sideOpen:true, keys:{} };
 try{ Object.assign(settings, JSON.parse(localStorage.getItem('webpad_settings')||'{}')); }catch(e){}
 function saveSettings(){ try{ localStorage.setItem('webpad_settings', JSON.stringify(settings)); }catch(e){} }
 var FONTS={ nanum:"'WebPadMono',Consolas,monospace", d2:"D2Coding,'D2Coding ligature','WebPadMono',monospace", consolas:"Consolas,'WebPadMono',monospace" };
@@ -711,6 +725,7 @@ function applySettings(){
   $('setSpaces').checked=settings.spaces;
   $('setAutoSave').checked=settings.autoSave;
   $('setHidden').checked=settings.showHidden;
+  $('setUpd').checked=settings.updAuto;
   $('setWs').checked=settings.showWs; $('setTrimSave').checked=settings.trimSave; $('setFinalNl').checked=settings.finalNl;
   $('sidebar').classList.toggle('hidden', !settings.sideOpen);
   $('resizer').classList.toggle('hidden', !settings.sideOpen);
@@ -4181,6 +4196,7 @@ var CMDS={
   clearUdl:function(){ localStorage.removeItem('webpad_udl'); buildLangs(); docs.forEach(function(d){ if(!LANGS[d.lang]){ d.lang=langForName(d.name); d.states=[null]; } }); updateLangUi(); requestRender(); toast('불러온 사용자 언어를 지웠어요'); },
   help:function(){ renderKeys(); $('helpModal').classList.remove('hidden'); },
   errLog:function(){ openErrLog(); },
+  checkUpdate:function(){ if(HOST){ toast('새 버전을 확인하는 중…'); checkUpdate(true); } else window.open(REL_PAGE, '_blank', 'noopener'); },
   getExe:function(){ window.open(EXE_URL, '_blank', 'noopener'); },
   install:function(){ if(installEvt){ installEvt.prompt(); installEvt=null; $('installBtn').classList.add('hidden'); } }
 };
@@ -4428,6 +4444,61 @@ window.addEventListener('beforeinstallprompt', function(e){ e.preventDefault(); 
 if(!HOST && 'serviceWorker' in navigator && location.protocol==='https:') navigator.serviceWorker.register('sw.js').catch(function(){});
 if(HOST) document.querySelector('[data-cmd="getExe"]').classList.add('hidden');
 if(!HOST) $('hiddenRow').classList.add('hidden');
+
+// ================= 업데이트 =================
+// exe 만 한다. 하루 한 번 exe 가 GitHub 릴리스의 최신 버전 번호를 확인하고(문서 내용·파일 이름은 보내지 않는다),
+// 버튼을 누르면 새 exe 를 받아 바꾸고 다시 켠다. 이 페이지는 CSP 로 외부 통신이 막혀 있어서 직접 확인하지 않는다.
+// 파일 하나짜리(webpad.html)는 받기 페이지를 여는 버튼만 있고, 웹(https) 버전은 새로 고치면 최신이 된다.
+var REL_PAGE='https://github.com/SeongTaekLee/webpad/releases/latest', UPD_ON=HOST, updBusy=false;
+function verCmp(a, b){
+  var x=String(a).split('.'), y=String(b).split('.');
+  for(var i=0;i<3;i++){ var d=(parseInt(x[i],10)||0)-(parseInt(y[i],10)||0); if(d) return d; }
+  return 0;
+}
+function updAvail(){ return UPD_ON && /^\d+\.\d+\.\d+$/.test(settings.updLatest||'') && verCmp(settings.updLatest, APP_VERSION)>0; }
+function updateUpdUi(){
+  var b=$('stUpd'), on=updAvail();
+  b.classList.toggle('hidden', !on);
+  if(on) b.textContent='새 버전 '+settings.updLatest+' · 업데이트';
+}
+function checkUpdate(manual){
+  return hostCall({ type:'checkUpdate' }).then(function(r){
+    var v=r.version;
+    if(!/^\d+\.\d+\.\d+$/.test(v)) throw new Error('버전을 읽지 못했어요');
+    settings.updAt=Date.now(); settings.updLatest=v; saveSettings(); updateUpdUi();
+    if(manual){ if(updAvail()) openUpdate(); else toast('최신 버전이에요 (v'+APP_VERSION+')'); }
+  }).catch(function(e){ if(manual) toast('새 버전을 확인하지 못했어요. '+(e && e.message || ''), true); });
+}
+function openUpdate(){
+  $('updTitle').textContent='새 버전 '+settings.updLatest;
+  $('updText').textContent='지금 쓰는 버전은 '+APP_VERSION+' 이에요. 업데이트하면 새 버전을 받아 웹패드를 다시 켜요. 열어 둔 탭과 저장하지 않은 글은 그대로 돌아와요.';
+  updSay('');
+  $('updModal').classList.remove('hidden');
+}
+function updSay(msg, err){ var m=$('updMsg'); m.textContent=msg; m.classList.toggle('err', !!err); }
+function updSetBusy(b){ updBusy=b; ['updGo','updLater','updNotes'].forEach(function(id){ $(id).disabled=b; }); }
+$('stUpd').addEventListener('click', openUpdate);
+$('updLater').addEventListener('click', function(){ $('updModal').classList.add('hidden'); if(active) active.ta.focus(); });
+$('updNotes').addEventListener('click', function(){ window.open(REL_PAGE, '_blank', 'noopener'); });
+$('updGo').addEventListener('click', function(){
+  if(updBusy || !HOST) return;
+  updSetBusy(true); updSay('새 버전을 받는 중… 잠시만 기다려 주세요');
+  hostCall({ type:'applyUpdate', version:settings.updLatest }).then(function(){
+    updSay('다시 켜는 중…');
+    window.chrome.webview.postMessage({ type:'restart' });
+  }).catch(function(e){
+    updSetBusy(false);
+    updSay('업데이트하지 못했어요. '+(e && e.message || '')+' "바뀐 점 보기"로 받기 페이지를 열어 직접 받을 수 있어요.', true);
+    logError('업데이트', e);
+  });
+});
+$('setUpd').addEventListener('change', function(){ settings.updAuto=this.checked; saveSettings(); if(this.checked) checkUpdate(false); });
+if(!HOST){
+  $('updRow').classList.add('hidden');
+  if(location.protocol==='https:') $('updCheck').classList.add('hidden'); else $('updCheck').textContent='새 버전 받기 페이지 열기';
+}
+updateUpdUi();
+if(UPD_ON && settings.updAuto && Date.now()-(settings.updAt||0)>20*3600*1000) setTimeout(function(){ checkUpdate(false); }, 4000);
 
 // ================= 실행 파일(WebView2) 연결 =================
 // exe로 연 파일은 exe가 내용을 보내 주고, 저장도 exe가 원래 경로에 쓴다
