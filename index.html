@@ -178,7 +178,7 @@
   .modal .frow input[type=number]{ width:80px; }
   .modal .opt{ font:12px var(--mono); padding:3px 7px; border:1px solid var(--line); }
   .modal .opt.on{ background:var(--accent-soft); border-color:var(--accent); }
-  #codeWrap{ flex:1; position:relative; overflow:hidden; min-width:0; }
+  #codeWrap{ flex:1; position:relative; overflow:hidden; overflow:clip; min-width:0; } /* clip: 스크립트나 브라우저가 이 상자를 밀어 화면이 어긋나는 일을 막는다 */
   #ruler{ position:absolute; right:0; top:0; bottom:0; width:10px; pointer-events:none; z-index:6; }
   #curLine{ position:absolute; left:0; right:0; height:var(--lh); background:var(--curline); pointer-events:none; }
   .layer{ position:absolute; left:0; top:0; margin:0; padding:4px 12px 0; font:var(--fs)/var(--lh) var(--mono); white-space:pre; tab-size:var(--tab); pointer-events:none; will-change:transform; }
@@ -249,6 +249,8 @@
   #statusbar select.si{ appearance:none; -webkit-appearance:none; padding-right:9px; }
   #statusbar select.si option{ background:var(--bg); color:var(--ink); }
   #statusbar .path{ flex:1; overflow:hidden; text-overflow:ellipsis; min-width:0; }
+  #statusbar #stVer.err{ color:#d9363e; font-weight:700; }
+  #logText{ width:100%; height:52vh; box-sizing:border-box; resize:vertical; padding:8px 10px; border:1px solid var(--line); border-radius:6px; background:var(--panel); color:var(--ink); font:12px/1.5 var(--mono); white-space:pre; }
   #snapState.ok{ color:var(--ok); }
   #stMode{ color:var(--accent); font-weight:700; }
 
@@ -427,6 +429,7 @@
         <label class="row" id="hiddenRow" title="탐색기에 $Recycle.Bin, System Volume Information 같은 숨김·시스템 항목도 보여줘요 (exe 버전)">숨김·시스템 파일 표시 <input type="checkbox" id="setHidden"></label>
         <hr>
         <button data-cmd="help">단축키 보기·바꾸기 <kbd data-key="help"></kbd></button>
+        <button data-cmd="errLog" title="화면이 이상하게 보일 때 눌러서 내용을 복사해 두면 원인을 찾을 수 있어요">버전·오류 기록 보기</button>
         <button data-cmd="importUdl">Notepad++ 사용자 언어(XML) 불러오기</button>
         <button data-cmd="clearUdl">불러온 사용자 언어 지우기</button>
       </div>
@@ -558,6 +561,7 @@
     </select>
     <select class="si" id="stLang" title="문법"></select>
     <span class="si" id="snapState">임시 저장 대기</span>
+    <button class="si" id="stVer" title="버전. 누르면 오류 기록과 진단 정보를 볼 수 있어요"></button>
   </div>
 </div>
 
@@ -608,6 +612,11 @@
   <div class="keys" id="keysList"></div>
 </div></div>
 
+<div class="modal-bg hidden" id="logModal"><div class="modal" style="width:min(820px,94vw)">
+  <h3>버전·오류 기록 <span class="note">문서 내용과 파일 이름은 들어가지 않아요</span><span class="spacer"></span><button class="tb" id="logCopy">복사</button><button class="tb" id="logClear">기록 지우기</button><button class="tb" id="logClose">닫기</button></h3>
+  <textarea id="logText" readonly spellcheck="false"></textarea>
+</div></div>
+
 <div id="toast"></div>
 <div id="dropHint">여기에 놓으면 파일이 열려요</div>
 <input type="file" id="fileInput" multiple class="hidden">
@@ -619,6 +628,63 @@
 var $=function(id){ return document.getElementById(id); };
 var FS_API=!!window.showOpenFilePicker;
 var HOST=!!(window.chrome && window.chrome.webview);
+var APP_VERSION='1.4.6'; // 배포할 때 launcher/WebPad.cs 의 AssemblyVersion, sw.js 의 CACHE 와 함께 올린다 (tools/test-format.js 가 맞는지 확인)
+
+// ================= 오류 기록 =================
+// 오류가 나면 브라우저 저장소에 남겨 두고, 상태 표시줄의 버전을 누르면 볼 수 있다. 문서 내용·파일 이름은 적지 않는다.
+// 같은 오류가 이어서 나면(화면을 그릴 때마다 등) 한 줄로 합쳐 횟수만 센다.
+var ERRLOG_KEY='webpad.errlog', errLog=[], errSaveTimer=0;
+try{ errLog=JSON.parse(localStorage.getItem(ERRLOG_KEY)||'[]')||[]; }catch(e){ errLog=[]; }
+function logError(where, err){
+  try{
+    var msg=String(err && err.message!=null ? err.message : err), stack=err && err.stack ? String(err.stack).split('\n').slice(0, 8).join('\n') : '';
+    var last=errLog[errLog.length-1], now=new Date().toISOString();
+    if(last && last.where===where && last.msg===msg){ last.n=(last.n||1)+1; last.last=now; }
+    else{
+      errLog.push({ t:now, v:APP_VERSION, where:where, msg:msg, stack:stack, ctx:logContext() });
+      if(errLog.length>40) errLog.splice(0, errLog.length-40);
+    }
+    clearTimeout(errSaveTimer); errSaveTimer=setTimeout(function(){ try{ localStorage.setItem(ERRLOG_KEY, JSON.stringify(errLog)); }catch(e){} updateVerUi(); }, 300);
+  }catch(e){}
+}
+window.addEventListener('error', function(e){ logError('스크립트', e.error || (e.message+' @'+e.lineno+':'+e.colno)); });
+window.addEventListener('unhandledrejection', function(e){ logError('비동기', e.reason); });
+// 지금 화면 상태. 화면이 비거나 잘려 보일 때 원인을 찾는 데 쓴다
+function logContext(){
+  try{
+    var d=typeof active!=='undefined' ? active : null, cw=$('codeWrap'), h=$('hl'), host=$('editorHost');
+    var o={ win:window.innerWidth+'x'+window.innerHeight, dpr:window.devicePixelRatio, host:host.classList.contains('hidden')?'숨김':host.clientWidth+'x'+host.clientHeight,
+      wrap:cw.clientWidth+'x'+cw.clientHeight+' 스크롤 '+cw.scrollTop+','+cw.scrollLeft+' 전체 '+cw.scrollWidth+'x'+cw.scrollHeight+(cw.classList.contains('bigscroll')?' 대용량':''),
+      page:[document.documentElement, document.body, $('app'), $('main')].map(function(el){ return el.scrollTop+','+el.scrollLeft; }).join(' '),
+      hl:(h.style.transform||'-')+' 글자 '+h.textContent.length, cmp:typeof cmp!=='undefined' && !!cmp, find:typeof findOpen!=='undefined' && !!findOpen,
+      tabs:typeof docs!=='undefined' ? docs.length : 0 };
+    if(d){
+      var ta=d.ta;
+      o.tab={ n:docs.indexOf(d)+1, lang:d.lang, lines:d.ls.length, chars:d.text.length, big:!!d.big, grid:!!d.grid, col:!!d.col, folds:d.folds.length, gaps:d.gaps.length,
+        win:d.w0+'~'+d.w1, off:d.off, local:d.ta.value.length, gsel:!!d.gsel, vsel:!!d.vsel,
+        ta:ta.clientWidth+'x'+ta.clientHeight+' 스크롤 '+ta.scrollTop+','+ta.scrollLeft+' 전체 '+ta.scrollWidth+'x'+ta.scrollHeight+' ['+ta.style.cssText+'] '+ta.className,
+        sel:ta.selectionStart+'~'+ta.selectionEnd };
+    }
+    return o;
+  }catch(e){ return { ctxError:String(e && e.message || e) }; }
+}
+function logReport(){
+  var out=['웹패드 '+APP_VERSION+' · '+(HOST?'실행 파일(exe)':'브라우저')+' · '+new Date().toISOString(), navigator.userAgent, '', '[지금 화면 상태]', JSON.stringify(logContext(), null, 1), ''];
+  try{ out.push('[열린 탭]'); docs.forEach(function(d, i){ out.push((i+1)+(d===active?'*':'')+' '+d.lang+' '+d.ls.length+'줄 '+d.text.length+'자'+(d.big?' 대용량':'')+(d.grid?' 표':'')+(d.folds.length?' 접기 '+d.folds.length:'')); }); }catch(e){}
+  out.push('', '[오류 기록 '+errLog.length+'건]');
+  if(!errLog.length) out.push('기록된 오류가 없어요');
+  errLog.slice().reverse().forEach(function(x){
+    out.push('--- '+x.t+(x.n>1?' ('+x.n+'번, 마지막 '+x.last+')':'')+' · v'+x.v+' · '+x.where, x.msg); if(x.stack) out.push(x.stack);
+    out.push(JSON.stringify(x.ctx));
+  });
+  return out.join('\n');
+}
+function updateVerUi(){
+  var b=$('stVer'); if(!b) return;
+  var n=errLog.length;
+  b.textContent='v'+APP_VERSION+(n?' · 오류 '+n:''); b.classList.toggle('err', n>0);
+}
+function openErrLog(){ $('logText').value=logReport(); $('logModal').classList.remove('hidden'); $('logText').scrollTop=0; }
 var EXE_URL='https://github.com/SeongTaekLee/webpad/releases/latest/download/WebPad.zip';
 var HL_LIMIT=4000;
 var PAD_TOP=4, PAD_LEFT=12;
@@ -1427,8 +1493,23 @@ function updateGutterWidth(){
   if(digits===gwDigits) return; gwDigits=digits;
   document.documentElement.style.setProperty('--gw', (digits*settings.fs*0.6+34|0)+'px');
 }
+// 그리다가 오류가 나면 기록하고, 글자만이라도 색 없이 그린다 (글은 이 층에만 보이므로 실패하면 화면이 빈 것처럼 보인다)
 function render(){
   renderQueued=false;
+  try{ renderDoc(); }
+  catch(e){ logError('화면 그리기', e); try{ renderPlain(); }catch(e2){ logError('화면 그리기(기본)', e2); } }
+}
+function renderPlain(){
+  var d=active; if(!d || d.grid) return;
+  var sc=scroller(d), st=sc.scrollTop, sl=sc.scrollLeft, H=codeWrap.clientHeight, N=d.ls.length;
+  var first=Math.max(0, Math.floor((st-PAD_TOP)/LH)-2), last=Math.min(N-1, Math.ceil((st+H)/LH)+2), html=[], nums=[];
+  for(var i=first;i<=last;i++){ html.push(esc(lineText(d, i))); nums.push(String(i+1)); }
+  hl.innerHTML=html.join('\n')+'\n';
+  hl.style.transform='translate('+(d.big?0:-sl)+'px,'+(first*LH+(d.big?0:-st))+'px)';
+  gutterInner.innerHTML=nums.join('\n');
+  gutterInner.style.transform='translateY('+(first*LH-st)+'px)';
+}
+function renderDoc(){
   var d=active; if(!d || d.grid) return;
   var sc=scroller(d), st=sc.scrollTop, sl=sc.scrollLeft, H=codeWrap.clientHeight;
   var firstRow=Math.max(0, Math.floor((st-PAD_TOP)/LH)-2);
@@ -1713,8 +1794,20 @@ function sizeBig(d, measureWidth){
 }
 function applyScrollMode(d){
   codeWrap.classList.toggle('bigscroll', !!d.big);
-  if(d.big) sizeBig(d, false); else { $('spacer').style.height='0'; $('spacer').style.width='1px'; }
+  if(d.big) sizeBig(d, false); else { $('spacer').style.height='0'; $('spacer').style.width='1px'; pinWrap(true); }
 }
+// 보통 문서에서는 입력칸이 스크롤하고 바깥 상자(codeWrap)는 제자리여야 한다. 색칠 층이 상자보다 넓어서 상자도 밀릴 수 있는데
+// (끌어서 선택하다 가장자리를 넘기는 등), 밀리면 글이 화면 밖으로 나가 빈 화면처럼 보인다. 밀린 것을 보면 바로 되돌린다
+function pinWrap(quiet){
+  if(active && active.big) return;
+  if(codeWrap.scrollTop || codeWrap.scrollLeft){ if(quiet!==true) logError('화면 밀림', '편집 상자가 '+codeWrap.scrollTop+','+codeWrap.scrollLeft+' 만큼 밀려 있어서 되돌림'); codeWrap.scrollTop=0; codeWrap.scrollLeft=0; }
+}
+codeWrap.addEventListener('scroll', pinWrap);
+// 페이지 전체가 밀리는 경우도 같은 식으로 되돌린다
+window.addEventListener('scroll', function(){
+  var r=document.documentElement, b=document.body;
+  if(r.scrollTop || r.scrollLeft || b.scrollTop || b.scrollLeft){ logError('화면 밀림', '페이지가 '+r.scrollTop+','+r.scrollLeft+' / '+b.scrollTop+','+b.scrollLeft+' 만큼 밀려 있어서 되돌림'); r.scrollTop=0; r.scrollLeft=0; b.scrollTop=0; b.scrollLeft=0; }
+});
 function ensureWindow(d, la, lb, margin){
   if(!d.big || d.composing) return;
   var N=d.ls.length;
@@ -4087,6 +4180,7 @@ var CMDS={
   importUdl:function(){ $('udlInput').click(); },
   clearUdl:function(){ localStorage.removeItem('webpad_udl'); buildLangs(); docs.forEach(function(d){ if(!LANGS[d.lang]){ d.lang=langForName(d.name); d.states=[null]; } }); updateLangUi(); requestRender(); toast('불러온 사용자 언어를 지웠어요'); },
   help:function(){ renderKeys(); $('helpModal').classList.remove('hidden'); },
+  errLog:function(){ openErrLog(); },
   getExe:function(){ window.open(EXE_URL, '_blank', 'noopener'); },
   install:function(){ if(installEvt){ installEvt.prompt(); installEvt=null; $('installBtn').classList.add('hidden'); } }
 };
@@ -4310,6 +4404,16 @@ function openEditCtx(e, d){
 }
 // 메뉴를 눌러도 편집기 포커스와 선택이 그대로 남게 한다 (잘라내기·복사가 선택에 바로 적용되도록)
 ['ctxTab','ctxEdit'].forEach(function(id){ $(id).addEventListener('mousedown', function(e){ e.preventDefault(); }); });
+
+$('stVer').addEventListener('click', openErrLog);
+$('logClose').addEventListener('click', function(){ $('logModal').classList.add('hidden'); if(active) active.ta.focus(); });
+$('logClear').addEventListener('click', function(){ errLog=[]; try{ localStorage.removeItem(ERRLOG_KEY); }catch(e){} updateVerUi(); $('logText').value=logReport(); });
+$('logCopy').addEventListener('click', function(){
+  var t=$('logText'), done=function(){ toast('복사했어요'); };
+  var viaSelect=function(){ t.focus(); t.select(); var ok=false; try{ ok=document.execCommand('copy'); }catch(e){} if(ok) done(); else toast('복사하지 못했어요. 글을 직접 선택해서 복사해 주세요', true); };
+  if(navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(t.value).then(done, viaSelect); else viaSelect();
+});
+updateVerUi();
 
 var toastTimer=0;
 function toast(msg, err){

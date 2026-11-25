@@ -79,5 +79,12 @@ for (const name of inputs) {
   console.log('  기대: ' + JSON.stringify(a.slice(k, k + 3).join('\n')));
   console.log('  결과: ' + JSON.stringify(b.slice(k, k + 3).join('\n')));
 }
+// 버전 표시가 서로 맞는지: index.html 의 APP_VERSION 과 launcher/WebPad.cs 의 AssemblyVersion
+if (show === null) {
+  const appVer = (/var APP_VERSION='([^']+)'/.exec(html) || [])[1];
+  const cs = fs.readFileSync(path.join(root, 'launcher', 'WebPad.cs'), 'utf8');
+  const exeVer = (/AssemblyVersion\("(\d+\.\d+\.\d+)\.\d+"\)/.exec(cs) || [])[1];
+  if (!appVer || appVer !== exeVer) { console.log('FAIL 버전이 달라요: index.html ' + appVer + ' / WebPad.cs ' + exeVer); fail++; } else pass++;
+}
 if (show === null) console.log(pass + ' 통과, ' + fail + ' 실패');
 process.exit(fail ? 1 : 0);

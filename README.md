@@ -50,6 +50,7 @@ exe에 코드 서명이 없어서 브라우저와 윈도우가 처음 보는 파
 - 저장 옵션: 줄 끝 공백 제거, 마지막 줄 바꿈 넣기
 - 두 탭 비교: 나란히 보기, 줄 안의 바뀐 글자 표시, 공백 무시
 - 자동 포맷(Ctrl+Alt+Shift+F, 문법에 맞게): ABAP Pretty Printer(블록 들여쓰기 2칸, 키워드 대문자·나머지 소문자, 이어지는 줄은 상대 위치 유지), SQL 강 정렬(SELECT 끝에 절 키워드 오른쪽 맞춤, 열마다 줄 앞 쉼표, 하위 질의 들여쓰기, 줄 끝 주석 정렬), XML 정리·압축·검사. 선택한 부분만 정리할 수도 있어요
+- 오른쪽 아래에 버전이 보여요. 누르면 지금 화면 상태와 오류 기록을 볼 수 있어요 (화면이 이상할 때 복사해서 보내 주세요. 문서 내용과 파일 이름은 들어가지 않아요)
 - JSON 정리, 압축, 키 정렬, 검사(오류 위치로 이동), CSV 표 편집(칸을 끌거나 Shift+클릭, 행 번호·열 머리글 클릭, Ctrl+A 로 범위를 골라 복사·잘라내기·Delete. 엑셀과 범위째 복사·붙여넣기가 돼요)
 - 상태 표시줄: 줄·칸, 선택 글자 수, 줄바꿈(CRLF/LF), 인코딩(UTF-8, UTF-8 BOM, EUC-KR, UTF-16), 문법
 - 임시 저장: 저장하지 않은 내용도 1초마다 보관해요. 다시 열면 탭이 그대로 돌아와요. 파일 자동 저장도 켤 수 있어요.
@@ -61,7 +62,7 @@ exe에 코드 서명이 없어서 브라우저와 윈도우가 처음 보는 파
 웹 버전은 `index.html` 파일 하나와 `fonts/`로 되어 있어요. exe는 윈도우에 기본으로 있는 C# 컴파일러로 만들어요.
 
 ```
-node tools\test-format.js   (ABAP·SQL·XML 포맷터 회귀 테스트: tests\format 의 입력과 기대 출력 비교)
+node tools\test-format.js   (ABAP·SQL·XML 포맷터 회귀 테스트: tests\format 의 입력과 기대 출력 비교. index.html 과 WebPad.cs 의 버전이 같은지도 확인)
 node tools\build-single.js  (dist\webpad.html: 글꼴까지 넣은 파일 하나)
 launcher\get-webview2.cmd   (WebView2 SDK 받기, 한 번만)
 launcher\build.cmd          (dist\WebPad.exe 와 배포용 dist\WebPad.zip 생성)
